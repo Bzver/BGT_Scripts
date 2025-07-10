@@ -1,6 +1,71 @@
-clearvars;
-data = readtable("D:\Project\Sleap-Models\QUAD\labels.v001.000_13-b-20-1toe1.analysis.csv");
-load('D:\Project\Sleap-Models\QUAD\13-b-20-1toe1_annot.mat');
+clear all
+close all
+
+%%
+
+numAnimal = 2;
+isAnnotated = 1;
+
+predFile = "D:\Project\Sleap-Models\QUAD\labels.v001.000_13-b-20-1toe1.analysis.csv";
+annotFile = "D:\Project\Sleap-Models\QUAD\13-b-20-1toe1_annot.mat";
+
+%%
+function point_val = interpolate_predctions()
+% Interpolate the missing predictions
+
+end
+
+function speed = calSpeed(x, y, frameRate)
+  if length(x) ~= length(y)
+    error('x and y vectors must have the same length.');
+  end
+  dx = diff(x);
+  dy = diff(y);
+  distances = sqrt(dx.^2 + dy.^2);
+  timeDiff = 1 / frameRate;
+  speed = distances / timeDiff;
+  speed = [0; speed]; % Pad the first frame speed with 0
+end
+
+function angles = calAngle(x1, y1, x2, y2, x3, y3)
+  if ~isequal(length(x1), length(y1), length(x2), length(y2), length(x3), length(y3))
+    error('All input columns must have the same length.');
+  end
+
+  numPoints = length(x1); % Number of sets of three points
+
+  % Preallocate the angles vector
+  angles = zeros(numPoints, 1);
+
+  % Calculate the angle for each set of three points
+  for i = 1:numPoints
+    p1 = [x1(i), y1(i)];
+    p2 = [x2(i), y2(i)];
+    p3 = [x3(i), y3(i)];
+
+    v1 = p1 - p2;
+    v2 = p3 - p2;
+
+    dotProduct = dot(v1, v2);
+    magnitudeV1 = norm(v1);
+    magnitudeV2 = norm(v2);
+
+    cosAngle = dotProduct / (magnitudeV1 * magnitudeV2);
+    angles(i) = abs(acos(cosAngle));
+  end
+end
+
+%%
+
+data = readtable(predFile);
+
+if isAnnotated == 1
+    load(annotFile);
+end
+
+
+
+
 procdata = table();
 
 procdata.category = annotation.annotation(1:15000,:);
@@ -57,64 +122,3 @@ procdatamat = table2array(procdata);
 procdatamat(:,4:9) = zscore(procdatamat(:,4:9));
 
 save('data2.mat');
-
-%%
-function filledColumn = fillNaNFromBackups(primaryColumn, backupColumns)
-    filledColumn = primaryColumn; % Initialize with the primary column
-
-    nanIndices = isnan(filledColumn);
-    if any(nanIndices)
-        temp = [filledColumn(nanIndices), backupColumns(nanIndices, :)];
-        firstNonNan = arrayfun(@(row) temp(row, find(~isnan(temp(row, :)), 1)), (1:sum(nanIndices))');
-        filledColumn(nanIndices) = firstNonNan;
-    end
-end
-
-function speed = calSpeed(x, y, frameRate)
-  % Check if input vectors have the same length
-  if length(x) ~= length(y)
-    error('x and y vectors must have the same length.');
-  end
-
-  % Calculate the distance between consecutive points
-  dx = diff(x);
-  dy = diff(y);
-  distances = sqrt(dx.^2 + dy.^2);
-
-  % Calculate the time difference between frames
-  timeDiff = 1 / frameRate;
-
-  % Calculate the speed
-  speed = distances / timeDiff;
-
-  % If you want to include the speed at the first frame, you can pad with NaN.
-  speed = [0; speed]; % or speed = [0; speed] if you want to assume speed 0 at the first frame.
-end
-
-function angles = calAngle(x1, y1, x2, y2, x3, y3)
-  if ~isequal(length(x1), length(y1), length(x2), length(y2), length(x3), length(y3))
-    error('All input columns must have the same length.');
-  end
-
-  numPoints = length(x1); % Number of sets of three points
-
-  % Preallocate the angles vector
-  angles = zeros(numPoints, 1);
-
-  % Calculate the angle for each set of three points
-  for i = 1:numPoints
-    p1 = [x1(i), y1(i)];
-    p2 = [x2(i), y2(i)];
-    p3 = [x3(i), y3(i)];
-
-    v1 = p1 - p2;
-    v2 = p3 - p2;
-
-    dotProduct = dot(v1, v2);
-    magnitudeV1 = norm(v1);
-    magnitudeV2 = norm(v2);
-
-    cosAngle = dotProduct / (magnitudeV1 * magnitudeV2);
-    angles(i) = abs(acos(cosAngle));
-  end
-end
