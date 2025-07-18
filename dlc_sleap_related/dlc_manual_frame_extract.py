@@ -14,7 +14,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QShortcut, QKeySequence, QCloseEvent
 from PySide6.QtWidgets import QMessageBox, QPushButton
 
-class dlcFrameFinder(QtWidgets.QMainWindow):
+class DLC_Frame_Finder(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("DLC Manual Frame Extractor")
@@ -49,7 +49,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
         self.progress_layout = QtWidgets.QHBoxLayout()
         self.play_button = QPushButton("▶")
         self.play_button.setFixedWidth(20)
-        self.progress_slider = custom_slider(Qt.Horizontal)
+        self.progress_slider = Slider_With_Marks(Qt.Horizontal)
         self.progress_slider.setRange(0, 0) # Will be set dynamically
         self.progress_slider.setTracking(True)
 
@@ -118,20 +118,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
         QShortcut(QKeySequence(Qt.Key_L | Qt.ShiftModifier), self).activated.connect(self.load_dlc_file)
         QShortcut(QKeySequence(Qt.Key_S | Qt.ControlModifier), self).activated.connect(self.save_frame_mark)
         
-        self.original_vid, self.prediction, self.dlc_dir, self.video_name = None, None, None, None
-        self.keypoints, self.skeleton, self.individuals, self.instance_count = None, None, None, None
-
-        self.multi_animal = False
-        self.pred_data = None
-
-        self.project_dir = None
-        self.labeled_frame_list, self.frame_list = [], []
-
-        self.cap, self.current_frame = None, None
-        self.confidence_cutoff = 0 # Default confidence cutoff
-
-        self.is_saved = True
-        self.last_saved = []
+        self.reset_state()
 
     def load_video(self):
         self.reset_state()
@@ -224,6 +211,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
                     label_frame_list.extend(lbf["df_with_missing"]["axis1_level2"].asstr()[()])
                 continue
             self.labeled_frame_list = [ int(f.split("img")[1].split(".")[0]) for f in label_frame_list ]
+            self.progress_slider.set_labeled_frames(self.labeled_frame_list)
             self.display_current_frame()
 
     def load_marked_frames(self):
@@ -458,7 +446,6 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
         if current_idx_in_marked >= 0:
             self.current_frame_idx = self.frame_list[current_idx_in_marked]
             self.display_current_frame()
-            self.current_marked_idx_in_list = current_idx_in_marked
             self.navigation_box_title_controller()
         else:
             QMessageBox.information(self, "Navigation", "No previous marked frame found.")
@@ -477,7 +464,6 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
         if current_idx_in_marked < len(self.frame_list):
             self.current_frame_idx = self.frame_list[current_idx_in_marked]
             self.display_current_frame()
-            self.current_marked_idx_in_list = current_idx_in_marked
             self.navigation_box_title_controller()
         else:
             QMessageBox.information(self, "Navigation", "No next marked frame found.")
@@ -530,7 +516,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
                     return False       
         try:
             # Initialize DLC extractor backend
-            extractor = dlcFrameExtractor(
+            extractor = DLC_Frame_Extractor(
                 self.original_vid,
                 self.prediction,
                 self.frame_list,
@@ -568,26 +554,24 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
             return False
 
     def reset_state(self):
-        self.progress_slider.setRange(0, 0)
-        self.navigation_group_box.hide()
-        self.original_vid = None
-        self.prediction = None
-        self.dlc_dir = None
-        self.video_name = None
-        self.multianimal = False
-        self.keypoints = None
-        self.skeleton = None
-        self.individuals = None
+        self.original_vid, self.prediction, self.dlc_dir, self.video_name = None, None, None, None
+        self.keypoints, self.skeleton, self.individuals, self.project_dir = None, None, None, None
+
         self.instance_count = 1
+        self.multi_animal = False
         self.pred_data = None
-        self.labeled_folder = None
-        self.labeled_frame_list = []
-        self.cap = None
-        self.current_frame = None
-        self.frame_list = []
+
+        self.labeled_frame_list, self.frame_list = [], []
+
+        self.cap, self.current_frame = None, None
+        self.confidence_cutoff = 0 # Default confidence cutoff
+
+        self.is_playing = False
         self.is_saved = True
         self.last_saved = []
-        self.is_playing = False
+
+        self.progress_slider.setRange(0, 0)
+        self.navigation_group_box.hide()
 
     def closeEvent(self, event: QCloseEvent):
         if not self.is_saved:
@@ -621,7 +605,7 @@ class dlcFrameFinder(QtWidgets.QMainWindow):
 
 #######################################################################################################################################################
 
-class custom_slider(QtWidgets.QSlider):
+class Slider_With_Marks(QtWidgets.QSlider):
     def __init__(self, orientation):
         super().__init__(orientation)
         self.marked_frames = set()
@@ -700,7 +684,7 @@ class custom_slider(QtWidgets.QSlider):
 
 #######################################################################################################################################################
 
-class dlcFrameExtractor:  # Backend for extracting frames for labeling in DLC
+class DLC_Frame_Extractor:  # Backend for extracting frames for labeling in DLC
     def __init__(self, original_vid, prediction, frame_list, dlc_dir, project_dir, video_name, pred_data, keypoints, individuals, multi_animal=False):
         self.original_vid = original_vid
         self.prediction = prediction
@@ -861,6 +845,6 @@ class dlcFrameExtractor:  # Backend for extracting frames for labeling in DLC
 
 if __name__ == "__main__":
     app = QtWidgets.QApplication([])
-    window = dlcFrameFinder()
+    window = DLC_Frame_Finder()
     window.show()
     app.exec()
