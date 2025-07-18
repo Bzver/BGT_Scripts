@@ -21,7 +21,7 @@ def get_video_metadata(input_path):
         num, den = map(int, frame_rate_str.split('/'))
         frame_rate = num / den
 
-        return frame_rate
+        return frame_rate, None
 
     except subprocess.CalledProcessError as e:
         print(f"Error probing {os.path.basename(input_path)}: {e}")
@@ -178,8 +178,8 @@ def process_videos_batch(input_folder, output_folder, output_suffix="-processed.
         if progress_callback: progress_callback(0, 0, "No video files found.")
         return (0, 0, 0)
 
-
     for i, filename in enumerate(video_files):
+        intermediate_path = None # Initialize intermediate_path at the beginning of the loop
         input_path = os.path.join(input_folder, filename)
         output_filename = os.path.splitext(filename)[0] + output_suffix
         output_path = os.path.join(output_folder, output_filename)
@@ -188,16 +188,16 @@ def process_videos_batch(input_folder, output_folder, output_suffix="-processed.
             progress_callback(i, total_files, f"Processing: {filename}")
 
         try:
-            frame_rate, total_frames = get_video_metadata(input_path, get_frames=not resample_only)
+            frame_rate, total_frames = get_video_metadata(input_path)
 
             if frame_rate is None:
-                 error_count += 1
-                 continue # Skip if metadata could not be retrieved
+                error_count += 1
+                continue # Skip if metadata could not be retrieved
 
             if frame_rate <= 0:
-                 print(f"Warning: Invalid frame rate ({frame_rate}) detected for {filename}. Skipping.")
-                 skipped_count += 1
-                 continue
+                print(f"Warning: Invalid frame rate ({frame_rate}) detected for {filename}. Skipping.")
+                skipped_count += 1
+                continue
 
             # Determine intermediate and final output paths
             intermediate_path = None
