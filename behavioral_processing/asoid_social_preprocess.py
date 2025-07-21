@@ -64,15 +64,20 @@ def remove_corresponding_annotation_idx(annot_file, indices_to_remove, fps):
     df = pd.read_csv(annot_file, header=[0])
     rows, cols = df.shape
     indices_to_remove_for_annot = set()
-    for i in range(rows):
-        idx_set = set(range( i * fps, (i+1) * fps))
-        if idx_set.issubset(indices_to_remove): # Delete when not a single frame with the sampled annotation exists anymore
-            indices_to_remove_for_annot.add(i)
-    df = df.drop(list(indices_to_remove_for_annot))
+    rows_to_keep = pd.Series(True, index=df.index)
+    removal_threshold = fps // 2
+    for i, row in df.iterrows():
+        start_frame = i * fps
+        end_frame = (i + 1) * fps
+        idx_num_in_deleted = sum(1 for frame_idx in range(start_frame, end_frame)
+                                 if frame_idx in indices_to_remove)
+        if idx_num_in_deleted >= removal_threshold:
+            rows_to_keep.loc[i] = False
+    df_filtered = df[rows_to_keep].reset_index(drop=True) 
     base, ext = os.path.splitext(annot_file)
     output_path = f"{base}_processed{ext}"
-    print(df.shape)
-    #df.to_csv(output_path, index=False)
+    print(df_filtered.shape)
+    #df_filtered.to_csv(output_path, index=False)
 
 def save_processed_pose(df_pose, pose_file, header):
     base, ext = os.path.splitext(pose_file)
@@ -92,6 +97,3 @@ if __name__ == "__main__":
     inst_count, fps = 2, 10
 
     asoid_preprocess(pose_file, annot_file, inst_count, fps)
-
-
-    
