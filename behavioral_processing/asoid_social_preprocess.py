@@ -12,9 +12,12 @@ def asoid_preprocess(pose_file, annot_file, inst_count, fps):
         df_interpol, indices_killer = smash_or_pass_consecutive_nan(df, consecutive_indices)
         df_pose = pd.concat([df_pose, df_interpol], axis=1)
         indices_to_remove.update(indices_killer)
-    df_pose = df_pose.drop(list(indices_to_remove))
-    remove_corresponding_annotation_idx(annot_file, indices_to_remove, fps)
-    save_processed_pose(df_pose, pose_file, header)
+    df_pose = df_pose.drop(indices_to_remove)
+    processed_annot_path = remove_corresponding_annotation_idx(annot_file, indices_to_remove, fps)
+    processed_pose_path = save_processed_pose(df_pose, pose_file, header)
+    print(f"ASOID social preprocessing completed successfully.")
+    print(f"Processed annotation file saved to: {processed_annot_path}")
+    print(f"Processed pose file saved to: {processed_pose_path}")
 
 def parse_dlc_prediction_csv(csv_path, inst_count):
     df_get_header = pd.read_csv(csv_path, header=None, low_memory=False)
@@ -58,38 +61,27 @@ def smash_or_pass_consecutive_nan(df, consecutive_indices):
             df.loc[start_idx:end_idx] = df.loc[start_idx:end_idx].interpolate(method='linear', limit_direction='both')
         else:
             indices_to_remove.update([idx for idx in block])
-    return df, indices_to_remove
+    return df, list(indices_to_remove)
 
 def remove_corresponding_annotation_idx(annot_file, indices_to_remove, fps):
     df = pd.read_csv(annot_file, header=[0])
-    rows, cols = df.shape
-    indices_to_remove_for_annot = set()
-    rows_to_keep = pd.Series(True, index=df.index)
-    removal_threshold = fps // 2
-    for i, row in df.iterrows():
-        start_frame = i * fps
-        end_frame = (i + 1) * fps
-        idx_num_in_deleted = sum(1 for frame_idx in range(start_frame, end_frame)
-                                 if frame_idx in indices_to_remove)
-        if idx_num_in_deleted >= removal_threshold:
-            rows_to_keep.loc[i] = False
-    df_filtered = df[rows_to_keep].reset_index(drop=True) 
+    df = df.drop(indices_to_remove)
     base, ext = os.path.splitext(annot_file)
     output_path = f"{base}_processed{ext}"
-    print(df_filtered.shape)
-    #df_filtered.to_csv(output_path, index=False)
+    df.to_csv(output_path, index=False)
+    return output_path
 
 def save_processed_pose(df_pose, pose_file, header):
     base, ext = os.path.splitext(pose_file)
     output_path = f"{base}_processed{ext}"
     df_pose = pd.concat([header, df_pose], axis=0)
-    print(df_pose.shape)
-    #df_pose.to_csv(output_path, index=False, header=None)
+    df_pose.to_csv(output_path, index=False, header=None)
+    return output_path
 
 if __name__ == "__main__":
-    folder = "D:/Project/DLC-Models/NTD/videos/jobs/assdfa"
-    pose_file_name = "1-20250626C1-first3h-DDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el_tr_track_refiner_modified_1.csv"
-    annot_file_name = "D20250626_annot_L.csv"
+    folder = "D:/Project/DLC-Models/NTD/videos/jobs/sdaawa"
+    pose_file_name = "2-20250626C1-first3h-SDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el_tr_track_refiner_modified_4.csv"
+    annot_file_name = "2-20250626_annot_R.csv"
 
     pose_file = os.path.join(folder, pose_file_name)
     annot_file = os.path.join(folder, annot_file_name)

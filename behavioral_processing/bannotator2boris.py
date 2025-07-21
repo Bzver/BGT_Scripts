@@ -5,6 +5,47 @@ import numpy as np
 
 #################   W   ##################   I   ##################   P   ##################   
 
+def annot_to_csv(input_file, fps, behavior_map=None, cutoff=None, output_path= None):
+    file_name = input_file.split(".")[0]
+    text_content = read_text_file(input_file)
+    config, data = parse_annotation(text_content)
+    # Determine all unique behaviors, considering both original and mapped names
+    all_behaviors = set()
+    for seg in data:
+        original_type = seg["type"]
+        if behavior_map and original_type in behavior_map:
+            all_behaviors.add(behavior_map[original_type])
+        else:
+            all_behaviors.add(original_type)
+            
+    behaviors_list = sorted(list(all_behaviors)) # Sort for consistent column order
+    max_frame = data[-1]["end"]
+    if cutoff and cutoff < max_frame:
+        max_frame = cutoff
+
+    # Initialize empty df for storing annotations
+    columns = ["time"] + behaviors_list
+    df_annot = pd.DataFrame(np.zeros((max_frame, len(behaviors_list) + 1)), columns=columns)
+    df_annot["time"] = np.array(range(max_frame)) / fps
+    
+    for seg in data:
+        original_type = seg["type"]
+        # Apply behavior mapping if provided
+        if behavior_map and original_type in behavior_map:
+            col = behavior_map[original_type]
+        else:
+            col = original_type
+        
+        start = seg["start"] - 1
+        end = seg["end"] - 1
+        
+        df_annot.loc[start:end, col] = 1
+    
+    if not output_path:
+        output_path = f"{file_name}.csv"
+    df_annot.to_csv(output_path, index=False)
+    print(f"Exported csv saved to {output_path}.")
+
 def read_text_file(file_path):
     try:
         with open(file_path, 'r', encoding='utf-8') as file:
@@ -71,62 +112,35 @@ def parse_annotation(text_content):
                 except ValueError:
                     # Handle cases where conversion to int fails
                     continue
-    
     return config, s1_data
 
-def annot_to_csv(input_file, fps, behavior_map=None, cutoff=None):
-    file_name = input_file.split(".")[0]
-    text_content = read_text_file(input_file)
-    config, data = parse_annotation(text_content)
-    # Determine all unique behaviors, considering both original and mapped names
-    all_behaviors = set()
-    for seg in data:
-        original_type = seg["type"]
-        if behavior_mapping and original_type in behavior_mapping:
-            all_behaviors.add(behavior_mapping[original_type])
-        else:
-            all_behaviors.add(original_type)
-            
-    behaviors_list = sorted(list(all_behaviors)) # Sort for consistent column order
-    max_frame = data[-1]["end"]
-    if cutoff and cutoff < max_frame:
-        max_frame = cutoff
-
-    # Initialize empty df for storing annotations
-    columns = ["time"] + behaviors_list
-    df_annot = pd.DataFrame(np.zeros((max_frame, len(behaviors_list) + 1)), columns=columns)
-    df_annot["time"] = np.array(range(max_frame)) / fps
-    
-    for seg in data:
-        original_type = seg["type"]
-        # Apply behavior mapping if provided
-        if behavior_mapping and original_type in behavior_mapping:
-            col = behavior_mapping[original_type]
-        else:
-            col = original_type
-        
-        start = seg["start"] - 1
-        end = seg["end"] - 1
-        
-        df_annot.loc[start:end, col] = 1
-    
-    output_csv = f"{file_name}.csv"
-    df_annot.to_csv(output_csv, index=False)
-
 if __name__ == "__main__":
+    fps = 10
     project_path = "D:/Project/DLC-Models/NTD/videos/jobs/assdfa/"
     annot_path = os.path.join(project_path,"20250626-directorsCut_annot.txt")
-    behavior_mapping =  {
-        "leftchamber": "other",
-        "rightchamber": "other",
-        "leftinitiative": "other",
-        "rightinitiative": "initiative",
-        "leftpassive": "other",
-        "rightpassive": "passive",
-        "leftflee": "other",
-        "rightflee": "flee",
+
+    output_name_L = "1-20250626_annot_L"
+    output_name_R = "2-20250626_annot_R"
+
+    output_path_L = os.path.join(project_path, f"{output_name_L}.csv")
+    output_path_R = os.path.join(project_path, f"{output_name_R}.csv")
+
+    behavior_mapping_L =  {
+        "leftchamber": "other", "rightchamber": "other",
+        "leftinitiative": "initiative", "rightinitiative": "other",
+        "leftpassive": "passive", "rightpassive": "other",
+        "leftflee": "flee", "rightflee": "other",
         "middleChamber": "other"
     }
-    cutoff_frame = 12000
-    fps = 10
-    annot_to_csv(annot_path, fps, behavior_mapping, cutoff_frame)
+
+    behavior_mapping_R =  {
+        "leftchamber": "other", "rightchamber": "other",
+        "leftinitiative": "other", "rightinitiative": "initiative",
+        "leftpassive": "other", "rightpassive": "passive",
+        "leftflee": "other", "rightflee": "flee",
+        "middleChamber": "other"
+    }
+    cutoff_frame = 120000
+
+    annot_to_csv(annot_path, fps, behavior_mapping_L, cutoff_frame, output_path_L)
+    annot_to_csv(annot_path, fps, behavior_mapping_R, cutoff_frame, output_path_R)
