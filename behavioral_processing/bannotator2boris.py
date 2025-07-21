@@ -3,8 +3,6 @@ import re
 import pandas as pd
 import numpy as np
 
-#################   W   ##################   I   ##################   P   ##################   
-
 def annot_to_csv(input_file, fps, behavior_map=None, cutoff=None, output_path= None):
     file_name = input_file.split(".")[0]
     text_content = read_text_file(input_file)
