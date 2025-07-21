@@ -18,7 +18,10 @@ def annot_to_csv(input_file, fps, behavior_map=None, cutoff=None, output_path= N
         else:
             all_behaviors.add(original_type)
             
-    behaviors_list = sorted(list(all_behaviors)) # Sort for consistent column order
+    # Separate 'other' behavior if it exists, and sort the rest
+    behaviors_list = sorted([b for b in all_behaviors if b != "other"])
+    if "other" in all_behaviors:
+        behaviors_list.append("other") # Ensure 'other' is always last
     max_frame = data[-1]["end"]
     if cutoff and cutoff < max_frame:
         max_frame = cutoff

@@ -11,6 +11,7 @@ def asoid_preprocess(pose_file, annot_file, inst_count, fps):
         df_pose = pd.concat([df_pose, df_interpol], axis=1)
         indices_to_remove.update(indices_killer)
     df_pose = df_pose.drop(indices_to_remove)
+    df_pose = ensure_no_df_nan(df_pose)
     processed_annot_path = remove_corresponding_annotation_idx(annot_file, indices_to_remove, fps)
     processed_pose_path = save_processed_pose(df_pose, pose_file, header)
     print(f"ASOID social preprocessing completed successfully.")
@@ -61,6 +62,14 @@ def smash_or_pass_consecutive_nan(df, consecutive_indices):
             indices_to_remove.update([idx for idx in block])
     return df, list(indices_to_remove)
 
+def ensure_no_df_nan(df):
+    # First interpolate, then ffill / bfill, at last check nan in file, if still any raise warning
+    df_processed = df.interpolate(method='linear', limit_direction='both')
+    df_processed = df_processed.ffill().bfill()
+    if df_processed.isnull().any().any():
+        print("Warning: NaN values still present in DataFrame after interpolation and fill operations.")
+    return df_processed
+
 def remove_corresponding_annotation_idx(annot_file, indices_to_remove, fps):
     df = pd.read_csv(annot_file, header=[0])
     df = df.drop(indices_to_remove)
@@ -77,13 +86,18 @@ def save_processed_pose(df_pose, pose_file, header):
     return output_path
 
 if __name__ == "__main__":
-    folder = "D:/Project/DLC-Models/NTD/videos/jobs/assdfa"
-    pose_file_name = "1-20250626C1-first3h-DDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el_tr_track_refiner_modified_1.csv"
-    annot_file_name = "1-20250626_annot_L.csv"
-
-    pose_file = os.path.join(folder, pose_file_name)
-    annot_file = os.path.join(folder, annot_file_name)
-
     inst_count, fps = 2, 10
+    folder = "D:/Project/DLC-Models/NTD/videos/jobs/assdfa"
+    
+    pose_file_name_1 = "1-20250626C1-first3h-DDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el_tr_track_refiner_modified_1.csv"
+    annot_file_name_1 = "1-20250626_annot_L.csv"
+    pose_file_1 = os.path.join(folder, pose_file_name_1)
+    annot_file_1 = os.path.join(folder, annot_file_name_1)
 
-    asoid_preprocess(pose_file, annot_file, inst_count, fps)
+    pose_file_name_2 = "2-20250626C1-first3h-SDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el_tr_track_refiner_modified_4.csv"
+    annot_file_name_2 = "2-20250626_annot_R.csv"
+    pose_file_2 = os.path.join(folder, pose_file_name_2)
+    annot_file_2 = os.path.join(folder, annot_file_name_2)
+
+    asoid_preprocess(pose_file_1, annot_file_1, inst_count, fps)
+    asoid_preprocess(pose_file_2, annot_file_2, inst_count, fps)
