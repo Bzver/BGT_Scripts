@@ -1,8 +1,6 @@
 import os
 import pandas as pd
 
-#################   W   ##################   I   ##################   P   ##################   
-
 def asoid_preprocess(pose_file, annot_file, inst_count, fps):
     df_inst_list, df_frame, header = parse_dlc_prediction_csv(pose_file, inst_count)
     df_pose = df_frame.copy()
@@ -58,7 +56,7 @@ def smash_or_pass_consecutive_nan(df, consecutive_indices):
         if len(block) <= 20:
             start_idx = block[0]
             end_idx = block[-1]
-            df.loc[start_idx:end_idx] = df.loc[start_idx:end_idx].interpolate(method='linear', limit_direction='both')
+            df.loc[start_idx-1:end_idx+1] = df.loc[start_idx-1:end_idx+1].interpolate(method='linear', limit_direction='both')
         else:
             indices_to_remove.update([idx for idx in block])
     return df, list(indices_to_remove)
@@ -79,9 +77,9 @@ def save_processed_pose(df_pose, pose_file, header):
     return output_path
 
 if __name__ == "__main__":
-    folder = "D:/Project/DLC-Models/NTD/videos/jobs/sdaawa"
-    pose_file_name = "2-20250626C1-first3h-SDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el_tr_track_refiner_modified_4.csv"
-    annot_file_name = "2-20250626_annot_R.csv"
+    folder = "D:/Project/DLC-Models/NTD/videos/jobs/assdfa"
+    pose_file_name = "1-20250626C1-first3h-DDLC_HrnetW32_bezver-SD-20250605M-cam52025-06-26shuffle1_detector_090_snapshot_080_el_tr_track_refiner_modified_1.csv"
+    annot_file_name = "1-20250626_annot_L.csv"
 
     pose_file = os.path.join(folder, pose_file_name)
     annot_file = os.path.join(folder, annot_file_name)
