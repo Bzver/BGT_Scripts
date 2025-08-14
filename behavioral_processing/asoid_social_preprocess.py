@@ -1,8 +1,8 @@
 import os
 import pandas as pd
 
-def asoid_preprocess(pose_filepath, inst_count=2):
-    df_inst_list, df_frame, header = parse_dlc_prediction_csv(pose_filepath, inst_count)
+def asoid_preprocess(pose_filepath, inst_count=2, training=False):
+    df_inst_list, df_frame, header = parse_dlc_prediction_csv(pose_filepath, inst_count, training)
     df_pose = df_frame.copy()
 
     for df in df_inst_list:
@@ -12,14 +12,19 @@ def asoid_preprocess(pose_filepath, inst_count=2):
 
     df_pose = ensure_no_df_nan(df_pose)
 
-    processed_pose_filepath = save_processed_pose(df_pose, pose_filepath, header)
+    comp = "_train" if training else "_processed"
+    processed_pose_filepath = save_processed_pose(df_pose, pose_filepath, header, comp)
     print(f"ASOID social preprocessing completed successfully.")
     print(f"Processed pose file saved to: {processed_pose_filepath}")
 
-def parse_dlc_prediction_csv(csv_path, inst_count):
+def parse_dlc_prediction_csv(csv_path, inst_count, training):
     df_get_header = pd.read_csv(csv_path, header=None, low_memory=False)
-    header = df_get_header.iloc[1:4,:] # Byebye scorer row
-    df = pd.read_csv(csv_path, header=[1, 2, 3])
+    if training:
+        header = df_get_header.iloc[0:4,:]
+        df = pd.read_csv(csv_path, header=[0, 1, 2, 3])
+    else: # Inferencing
+        header = df_get_header.iloc[1:4,:] # Byebye scorer row
+        df = pd.read_csv(csv_path, header=[1, 2, 3])
     df.columns = ['_'.join(col).strip() for col in df.columns.values]
     header.columns = df.columns
     num_cols = df.shape[1]
@@ -67,9 +72,9 @@ def ensure_no_df_nan(df):
         print("Warning: NaN values still present in DataFrame after interpolation and fill operations.")
     return df_processed
 
-def save_processed_pose(df_pose, pose_file, header):
+def save_processed_pose(df_pose, pose_file, header, comp):
     base, ext = os.path.splitext(pose_file)
-    output_path = f"{base}_processed{ext}"
+    output_path = f"{base}{comp}{ext}"
     df_pose = pd.concat([header, df_pose], axis=0)
     df_pose.to_csv(output_path, index=False, header=None)
     return output_path
@@ -77,8 +82,8 @@ def save_processed_pose(df_pose, pose_file, header):
 if __name__ == "__main__":
     folder_list = [
         "D:/Project/A-SOID/Data/20250626",
-        "D:/Project/A-SOID/Data/20250709",
-        "D:/Project/A-SOID/Data/20250716"
+        # "D:/Project/A-SOID/Data/20250709",
+        # "D:/Project/A-SOID/Data/20250716"
     ]
     for folder in folder_list:
         print(folder)
@@ -87,4 +92,4 @@ if __name__ == "__main__":
         for csv in csv_list:
             if "_processed" not in csv:
                 csv_filepath = os.path.join(folder, csv)
-                asoid_preprocess(csv_filepath)
+                asoid_preprocess(csv_filepath, training=True)
