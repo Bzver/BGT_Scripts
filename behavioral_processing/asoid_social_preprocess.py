@@ -1,23 +1,20 @@
 import os
 import pandas as pd
 
-def asoid_preprocess(pose_file, annot_file=None, inst_count=2):
-    df_inst_list, df_frame, header = parse_dlc_prediction_csv(pose_file, inst_count)
+def asoid_preprocess(pose_filepath, inst_count=2):
+    df_inst_list, df_frame, header = parse_dlc_prediction_csv(pose_filepath, inst_count)
     df_pose = df_frame.copy()
-    indices_to_remove = set()
+
     for df in df_inst_list:
         consecutive_indices = get_nan_frame_for_inst(df)
-        df_interpol, indices_killer = smash_or_pass_consecutive_nan(df, consecutive_indices)
+        df_interpol = smash_or_pass_consecutive_nan(df, consecutive_indices)
         df_pose = pd.concat([df_pose, df_interpol], axis=1)
-        indices_to_remove.update(indices_killer)
-    df_pose = df_pose.drop(indices_to_remove)
+
     df_pose = ensure_no_df_nan(df_pose)
-    if annot_file is not None:
-        processed_annot_path = remove_corresponding_annotation_idx(annot_file, indices_to_remove)
-        print(f"Processed annotation file saved to: {processed_annot_path}")
-    processed_pose_path = save_processed_pose(df_pose, pose_file, header)
+
+    processed_pose_filepath = save_processed_pose(df_pose, pose_filepath, header)
     print(f"ASOID social preprocessing completed successfully.")
-    print(f"Processed pose file saved to: {processed_pose_path}")
+    print(f"Processed pose file saved to: {processed_pose_filepath}")
 
 def parse_dlc_prediction_csv(csv_path, inst_count):
     df_get_header = pd.read_csv(csv_path, header=None, low_memory=False)
@@ -25,7 +22,7 @@ def parse_dlc_prediction_csv(csv_path, inst_count):
     df = pd.read_csv(csv_path, header=[1, 2, 3])
     df.columns = ['_'.join(col).strip() for col in df.columns.values]
     header.columns = df.columns
-    num_frames, num_cols = df.shape
+    num_cols = df.shape[1]
     df_frame = df.iloc[:,0]
     df_inst_list = []
     num_cols_per_inst = (num_cols - 1) // inst_count
@@ -52,16 +49,15 @@ def get_nan_frame_for_inst(df):
     return consecutive_indices
 
 def smash_or_pass_consecutive_nan(df, consecutive_indices):
-    """Determine whether to interpolate the nan frame or remove it"""
-    indices_to_remove = set()
+    """Determine whether to interpolate the nan frame or process it"""
     for block in consecutive_indices:
         if len(block) <= 20:
             start_idx = block[0]
             end_idx = block[-1]
             df.loc[start_idx-1:end_idx+1] = df.loc[start_idx-1:end_idx+1].interpolate(method='linear', limit_direction='both')
         else:
-            indices_to_remove.update([idx for idx in block])
-    return df, list(indices_to_remove)
+            df.loc[block, :] = 99999
+    return df
 
 def ensure_no_df_nan(df):
     # First interpolate, then ffill / bfill, at last check nan in file, if still any raise warning
@@ -70,14 +66,6 @@ def ensure_no_df_nan(df):
     if df_processed.isnull().any().any():
         print("Warning: NaN values still present in DataFrame after interpolation and fill operations.")
     return df_processed
-
-def remove_corresponding_annotation_idx(annot_file, indices_to_remove):
-    df = pd.read_csv(annot_file, header=[0])
-    df = df.drop(indices_to_remove)
-    base, ext = os.path.splitext(annot_file)
-    output_path = f"{base}_processed{ext}"
-    df.to_csv(output_path, index=False)
-    return output_path
 
 def save_processed_pose(df_pose, pose_file, header):
     base, ext = os.path.splitext(pose_file)
