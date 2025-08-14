@@ -2,22 +2,26 @@ import os
 import pandas as pd
 import scipy.io as sio
 
-def csvs_to_mat_annotation(folder:str, dom_id:str, *csv_names: str):
-    list_df = []
-    for csv in csv_names:
-        csv_filepath = os.path.join(folder, csv)
-        df = csv_loader(csv_filepath)
-        if dom_id in csv:
-            df = prefix_dominance_adder(df, dom=True)
-        else:
-            df = prefix_dominance_adder(df)
-        list_df.append(df)
+def csvs_to_mat_annotation(dom_csv_filepath:str, dom_id:str, sub_id:str):
+    sub_csv_filepath = dom_csv_filepath.replace(dom_id, sub_id)
 
-    behavioral_dict, annotation = behavior_sorter(list_df)
+    if not os.path.isfile(sub_csv_filepath):
+        print(f"Cannot find corresponding file for {dom_csv_filepath}.")
+        return
+
+    df_dom = csv_loader(dom_csv_filepath)
+    df_sub = csv_loader(sub_csv_filepath)
+
+    df_dom = prefix_dominance_adder(df_dom, True)
+    df_sub = prefix_dominance_adder(df_sub, False)
+
+    df_pair = [df_dom, df_sub]
+    behavioral_dict, annotation = behavior_sorter(df_pair)
+    
     if behavioral_dict is None or annotation is None:
         return
     
-    mat_filepath = csv_filepath.replace("D.csv", ".mat").replace("S.csv", ".mat")
+    mat_filepath = dom_csv_filepath.replace(f"{dom_id}csv", ".mat")
     save_to_mat(mat_filepath, behavioral_dict, annotation)
 
 def csv_loader(csv_filepath: str):
@@ -35,9 +39,9 @@ def prefix_dominance_adder(df:pd.DataFrame, dom=False):
     df = df.add_prefix(prefix)
     return df
 
-def behavior_sorter(list_df:list):
+def behavior_sorter(df_pair:list):
     try:
-        df_combined = pd.concat(list_df, axis=1)
+        df_combined = pd.concat(df_pair, axis=1)
         df_combined = df_combined.fillna(0.0)
 
         behavioral_dict = {"other": 0}
@@ -64,12 +68,16 @@ def save_to_mat(mat_filepath, behavioral_dict, annotation):
         }
         mat_to_save = {"annotation": annotation_struct}
         sio.savemat(mat_filepath, mat_to_save)
+        print(f"Successfully saved to {mat_filepath}")
     except Exception as e:
         print(f"Failed to save {mat_filepath}, Exception: {e}")
 
 if __name__ == "__main__":
     folder = "D:/Project/A-SOID/250720-Social/videos"
-    csv_dom = "20250626C1-first3h-D.csv"
-    csv_sub = "20250626C1-first3h-S.csv"
-    dom_id = "-D."
-    csvs_to_mat_annotation(folder, dom_id, csv_dom, csv_sub)
+    dom_id = "-D_ppcs."
+    sub_id = "-S_ppcs."
+
+    for file in os.listdir(folder):
+        if dom_id in file:
+            dom_csv_filepath = os.path.join(folder, file)
+            csvs_to_mat_annotation(dom_csv_filepath, dom_id, sub_id)
