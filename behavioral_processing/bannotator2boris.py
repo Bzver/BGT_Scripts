@@ -60,6 +60,10 @@ def read_text_file(file_path):
         return None
 
 def parse_annotation(text_content):
+    if text_content is None:
+        print("Annotation is empty?!!")
+        return
+    
     config = {}
     s1_data = []
     lines = text_content.strip().split('\n')
@@ -117,8 +121,8 @@ def parse_annotation(text_content):
 
 if __name__ == "__main__":
     fps = 10
-    project_path = "D:/Project/DLC-Models/NTD/videos/jobs/assdfa/"
-    annot_path = os.path.join(project_path,"20250626-directorsCut_annot.txt")
+    project_path = "D:/DGH/Data/Videos/2025-06-26 7day Marathon"
+    annot_path = os.path.join(project_path, "20250626-directorsCut_annot.txt")
 
     output_name_L = "1-20250626_annot_L"
     output_name_R = "2-20250626_annot_R"
@@ -127,21 +131,29 @@ if __name__ == "__main__":
     output_path_R = os.path.join(project_path, f"{output_name_R}.csv")
 
     behavior_mapping_L =  {
-        "leftchamber": "other", "rightchamber": "other",
-        "leftinitiative": "initiative", "rightinitiative": "other",
-        "leftpassive": "passive", "rightpassive": "other",
-        "leftflee": "flee", "rightflee": "other",
+        "leftchamber": "idle",
+        "rightchamber": "other",
+        "leftinitiative": "initiative",
+        "rightinitiative": "other",
+        "leftpassive": "passive",
+        "rightpassive": "other",
+        "leftflee": "flee",
+        "rightflee": "other",
         "middleChamber": "other"
     }
 
     behavior_mapping_R =  {
-        "leftchamber": "other", "rightchamber": "other",
-        "leftinitiative": "other", "rightinitiative": "initiative",
-        "leftpassive": "other", "rightpassive": "passive",
-        "leftflee": "other", "rightflee": "flee",
+        "leftchamber": "other",
+        "rightchamber": "idle",
+        "leftinitiative": "other",
+        "rightinitiative": "initiative",
+        "leftpassive": "other",
+        "rightpassive": "passive",
+        "leftflee": "other",
+        "rightflee": "flee",
         "middleChamber": "other"
     }
-    cutoff_frame = 120000
+    cutoff_frame = 125800
 
     annot_to_csv(annot_path, fps, behavior_mapping_L, cutoff_frame, output_path_L)
     annot_to_csv(annot_path, fps, behavior_mapping_R, cutoff_frame, output_path_R)
