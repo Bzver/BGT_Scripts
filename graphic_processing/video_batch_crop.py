@@ -1,31 +1,13 @@
 import os
 import subprocess
+from tqdm import tqdm
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk # Added ttk for progress later if needed
-import tempfile # For temporary frame image
-from PIL import Image, ImageTk # For image display
-
-# --- Main Processing Function (Mostly unchanged, added progress reporting) ---
+import tempfile
+from PIL import Image, ImageTk
 
 def crop_resize_and_convert_videos(input_folder, output_folder, crop_left, crop_top, crop_right, crop_bottom, target_width, target_height, output_suffix="-conv.mp4", progress_callback=None):
-    """
-    Crops, resizes, and converts videos using FFmpeg.
-
-    Args:
-        input_folder (str): Path to the folder containing input videos.
-        output_folder (str): Path to the folder to save output videos.
-        crop_left (int): Number of pixels to crop from the left.
-        crop_top (int): Number of pixels to crop from the top.
-        crop_right (int): Number of pixels to crop from the right.
-        crop_bottom (int): Number of pixels to crop from the bottom.
-        target_width (int): Target width of the output video.
-        target_height (int): Target height of the output video.
-        output_suffix (str): Suffix to add to the converted output filenames.
-        progress_callback (function, optional): Function to call with progress updates (current, total).
-
-    Returns:
-        tuple: (processed_count, skipped_count, error_count)
-    """
+    """Crops, resizes, and converts videos using FFmpeg."""
     if not input_folder or not output_folder:
         messagebox.showerror("Error", "Input and Output folders must be selected.")
         return (0, 0, 0)
@@ -82,6 +64,14 @@ def crop_resize_and_convert_videos(input_folder, output_folder, crop_left, crop_
             progress_callback(i, total_files, f"Processing: {filename}")
 
         try:
+            # Get video duration using ffprobe
+            probe_command = [
+                'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1', input_path
+            ]
+            duration_result = subprocess.run(probe_command, capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+            total_duration = float(duration_result.stdout.strip())
+
             # Get video dimensions using ffprobe
             probe_command = [
                 'ffprobe', '-v', 'error', '-select_streams', 'v:0',
@@ -110,9 +100,22 @@ def crop_resize_and_convert_videos(input_folder, output_folder, crop_left, crop_
                 'ffmpeg', '-y', '-i', input_path,
                 '-vf', f'crop={crop_width}:{crop_height}:{crop_x}:{crop_y},scale={target_width}:{target_height}',
                 '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'superfast',
-                '-crf', '23', '-c:a', 'copy', output_path
+               '-crf', '23', '-c:a', 'copy',
+               '-progress', 'pipe:1', '-nostats', output_path
             ]
-            subprocess.run(ffmpeg_command, check=True, creationflags=subprocess.CREATE_NO_WINDOW, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            process = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, creationflags=subprocess.CREATE_NO_WINDOW)
+
+            with tqdm(total=total_duration, unit="s", desc=f"Processing: {filename}") as pbar:
+                for line in process.stdout:
+                    if "time=" in line:
+                        try:
+                            time_str = line.split("time=")[1].split(" ")[0]
+                            h, m, s = map(float, time_str.split(':'))
+                            current_time_seconds = h * 3600 + m * 60 + s
+                            pbar.update(current_time_seconds - pbar.n)
+                        except (IndexError, ValueError):
+                            pass
+            process.wait()
 
             print(f"Processed: {filename} -> {output_filename}")
             processed_count += 1
@@ -158,7 +161,6 @@ def crop_resize_and_convert_videos(input_folder, output_folder, crop_left, crop_
     # Summary messagebox shown by the GUI caller
     return (processed_count, skipped_count, error_count)
 
-
 # --- GUI Setup ---
 class App:
     def __init__(self, master):
@@ -196,7 +198,7 @@ class App:
         preview_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         action_frame = tk.Frame(master, padx=5, pady=10)
-        action_frame.pack(fill=tk.X, side=tk.BOTTOM) # Place at bottom
+        action_frame.pack(fill=tk.X, side=tk.BOTTOM)
 
         # --- Top Frame Widgets (Folders) ---
         tk.Label(top_frame, text="Input Folder:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
@@ -216,12 +218,16 @@ class App:
         tk.Label(param_frame, text="Crop Pixels From:").grid(row=0, column=0, columnspan=4, pady=(0, 5), sticky="w")
         tk.Label(param_frame, text="Left:").grid(row=1, column=0, padx=5, pady=2, sticky="e")
         tk.Entry(param_frame, textvariable=self.crop_left, width=7).grid(row=1, column=1, padx=5, pady=2, sticky="w")
+        self.crop_left.trace_add("write", self.update_preview)
         tk.Label(param_frame, text="Top:").grid(row=1, column=2, padx=5, pady=2, sticky="e")
         tk.Entry(param_frame, textvariable=self.crop_top, width=7).grid(row=1, column=3, padx=5, pady=2, sticky="w")
+        self.crop_top.trace_add("write", self.update_preview)
         tk.Label(param_frame, text="Right:").grid(row=2, column=0, padx=5, pady=2, sticky="e")
         tk.Entry(param_frame, textvariable=self.crop_right, width=7).grid(row=2, column=1, padx=5, pady=2, sticky="w")
+        self.crop_right.trace_add("write", self.update_preview)
         tk.Label(param_frame, text="Bottom:").grid(row=2, column=2, padx=5, pady=2, sticky="e")
         tk.Entry(param_frame, textvariable=self.crop_bottom, width=7).grid(row=2, column=3, padx=5, pady=2, sticky="w")
+        self.crop_bottom.trace_add("write", self.update_preview)
 
         # Target Size Parameters
         tk.Label(param_frame, text="Target Size (pixels):").grid(row=3, column=0, columnspan=4, pady=(10, 5), sticky="w")
@@ -234,16 +240,9 @@ class App:
         tk.Label(param_frame, text="Output Suffix:").grid(row=5, column=0, padx=5, pady=(10,2), sticky="e")
         tk.Entry(param_frame, textvariable=self.output_suffix, width=15).grid(row=5, column=1, columnspan=3, padx=5, pady=(10,2), sticky="w")
 
-
         # --- Preview Frame Widgets ---
         preview_controls_frame = tk.Frame(preview_frame)
         preview_controls_frame.pack(fill=tk.X, pady=(0, 5))
-
-        tk.Label(preview_controls_frame, text="Preview Video:").pack(side=tk.LEFT, padx=(0, 5))
-        self.preview_entry = tk.Entry(preview_controls_frame, textvariable=self.preview_video_path, width=40)
-        self.preview_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        tk.Button(preview_controls_frame, text="Browse...", command=self.select_preview_video).pack(side=tk.LEFT, padx=5)
-        tk.Button(preview_controls_frame, text="Update Preview", command=self.update_preview).pack(side=tk.LEFT, padx=(5, 0))
 
         self.preview_canvas = tk.Canvas(preview_frame, bg="grey", relief=tk.SUNKEN, borderwidth=1)
         self.preview_canvas.pack(fill=tk.BOTH, expand=True)
@@ -256,14 +255,12 @@ class App:
         # Progress Bar (Optional but good for long tasks)
         self.progress_label = tk.Label(action_frame, text="")
         self.progress_label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-        # self.progress_bar = ttk.Progressbar(action_frame, orient=tk.HORIZONTAL, length=300, mode='determinate')
-        # self.progress_bar.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
-
 
     def select_input(self):
         folder_selected = filedialog.askdirectory()
         if folder_selected:
             self.input_folder.set(folder_selected)
+            self.select_preview_video()
 
     def select_output(self):
         folder_selected = filedialog.askdirectory()
@@ -271,12 +268,12 @@ class App:
             self.output_folder.set(folder_selected)
 
     def select_preview_video(self):
-        file_selected = filedialog.askopenfilename(
-            title="Select Video for Preview",
-            filetypes=(("Video Files", "*.mp4 *.avi *.mov *.mkv"), ("All files", "*.*"))
-        )
+        file_selected = []
+        for file in os.listdir(self.input_folder.get()):
+            if file.endswith(('.mp4', '.avi', '.mov', '.mkv')):
+                file_selected.append(os.path.join(self.input_folder.get(), file))
         if file_selected:
-            self.preview_video_path.set(file_selected)
+            self.preview_video_path.set(file_selected[0])
             self.update_preview() # Automatically update preview on new selection
 
     def _get_int_param(self, tk_var, name):
@@ -290,7 +287,6 @@ class App:
             raise ValueError(f"Invalid integer value for {name}.")
         except ValueError as e:
              raise ValueError(f"Invalid value for {name}: {e}")
-
 
     def _extract_frame(self, video_path, output_image_path, time_offset="00:00:01"):
         """Extracts a single frame using FFmpeg."""
@@ -337,10 +333,9 @@ class App:
 
     def on_canvas_resize(self, event):
         """Redraw preview when canvas size changes."""
-        # Simple redraw - could be optimized later if needed
-        self.update_preview(force_extract=False) # Don't re-extract frame on resize
+        self.update_preview(force_extract=False)
 
-    def update_preview(self, force_extract=True):
+    def update_preview(self, *args, force_extract=True):
         """Updates the preview canvas with the frame and crop rectangle."""
         video_path = self.preview_video_path.get()
         if not video_path or not os.path.exists(video_path):
@@ -378,8 +373,6 @@ class App:
                 return
             self.original_preview_dims = dims
 
-
-        # --- 2. Load and Resize Image ---
         try:
             img = Image.open(self.preview_image_path)
             img.load() # Ensure image data is loaded
@@ -396,10 +389,6 @@ class App:
             width_scale = canvas_width / img_width
             height_scale = canvas_height / img_height
             self.preview_scale_factor = min(width_scale, height_scale)
-
-            # Prevent upscaling beyond original size (optional, but often desired)
-            # self.preview_scale_factor = min(self.preview_scale_factor, 1.0)
-
             new_width = int(img_width * self.preview_scale_factor)
             new_height = int(img_height * self.preview_scale_factor)
 
@@ -488,7 +477,6 @@ class App:
             self.progress_label['text'] = message
         self.master.update_idletasks() # Force GUI update
 
-
     def run_processing(self):
         in_folder = self.input_folder.get()
         out_folder = self.output_folder.get()
@@ -510,9 +498,7 @@ class App:
             # Basic validation
             if t_width <= 0 or t_height <= 0:
                  raise ValueError("Target Width and Height must be positive integers.")
-            # Optional: Validate suffix? (e.g., not empty, starts with '-', etc.)
-            # For now, allow any string including empty.
-
+            
             # Disable button during processing
             self.run_button.config(state=tk.DISABLED, text="Processing...")
             self.update_progress(0, 0, "Starting...") # Initial progress update
@@ -561,4 +547,3 @@ if __name__ == "__main__":
              print(f"Cleaned up temp file: {app.preview_image_path}")
          except OSError as e:
              print(f"Warning: Could not remove temp file {app.preview_image_path}: {e}")
-
