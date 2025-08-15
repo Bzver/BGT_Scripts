@@ -44,15 +44,20 @@ def behavior_sorter(df_pair:list):
         df_combined = pd.concat(df_pair, axis=1)
         df_combined = df_combined.fillna(0.0)
 
-        behavioral_dict = {"other": 0}
+        # Assign 1-based codes: 'other' = 1, behaviors start at 2
+        behavioral_dict = {"other": 1}
         column_list = df_combined.columns
 
         for i in range(len(column_list)):
-            behavioral_dict[f"{column_list[i]}"] = i + 1
+            behavioral_dict[f"{column_list[i]}"] = i + 2
 
-        annotation = pd.Series(0.0, index=df_combined.index)
+        # Initialize annotation with 'other' (1) everywhere
+        annotation = pd.Series(1.0, index=df_combined.index)
+
+        # Overlay behavior codes where active
         for col in column_list:
-            annotation += df_combined[col] * behavioral_dict[col]
+            code = behavioral_dict[col]
+            annotation[df_combined[col] != 0] = code
 
         return behavioral_dict, annotation
 
