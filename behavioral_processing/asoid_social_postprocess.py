@@ -138,6 +138,8 @@ def diff_between_sniff_and_anogenital(df_pose, df_pred):
             df_pred.loc[idx, "init_sniff"] = 1
             df_pred.loc[idx, "init_anogenital"] = 0
 
+    df_pred.drop("initiative", axis=1, inplace=True) # Clean the now redundant initiative col
+
     print(f"Classified {len(initiative_frames)} 'initiative' frames into sniff/anogenital.")
     
 if __name__ == "__main__":
