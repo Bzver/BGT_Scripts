@@ -88,8 +88,9 @@ if __name__ == "__main__":
     MODE = input("Press 1 to load existing timestamp.txt and preview a single video, or else preview the whole folder:")
 
     if MODE == '1':
-        timestamp = "D:/Workwork/#/timestamp.txt"
-        video_file = "D:/Workwork/#/20250626-directorsCut.mkv"
+        timestamp = input("Enter the path of timestamp files: ")
+        video_file = input("Enter the path of the video file: ")
+        length = input("Enter the duration of the preview (e.g., 00:00:05 or 5 for 5 seconds): ")
         folder_path = os.path.dirname(video_file)
         if os.path.isfile(video_file) and os.path.isfile(timestamp):
             entries = parse_timestamps(timestamp)
@@ -99,7 +100,7 @@ if __name__ == "__main__":
                 output_folder = os.path.join(folder_path, "video_previews")
                 os.makedirs(output_folder, exist_ok=True)
                 output_file = os.path.join(output_folder, f"{save_name}.mp4")
-                generate_video_preview(video_file, output_file, start_time, '30')
+                generate_video_preview(video_file, output_file, start_time, length)
         else:
             print(f"Error: Video file '{video_file}' or timestamp file '{timestamp}' not found.")
     else:
