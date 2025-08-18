@@ -4,6 +4,9 @@ import pandas as pd
 import numpy as np
 
 def annot_to_csv(input_file, fps, behavior_map=None, cutoff=None, output_path= None):
+    if not os.path.isfile(input_file):
+        print(f"{input_file} does not exist!")
+        return
     file_name = input_file.split(".")[0]
     text_content = read_text_file(input_file)
     config, data = parse_annotation(text_content)
@@ -121,39 +124,35 @@ def parse_annotation(text_content):
 
 if __name__ == "__main__":
     fps = 10
-    project_path = "D:/DGH/Data/Videos/2025-06-26 7day Marathon"
-    annot_path = os.path.join(project_path, "20250626-directorsCut_annot.txt")
+    project_path = "D:/DGH/Data/Videos/2025-07-14 7day Marathon"
+    annot_path = os.path.join(project_path, "20250716-first3h40min_annot.txt")
 
-    output_name_L = "1-20250626_annot_L"
-    output_name_R = "2-20250626_annot_R"
+    output_name_D = "20250716_annot_dom"
+    output_name_S = "20250716_annot_sub"
 
-    output_path_L = os.path.join(project_path, f"{output_name_L}.csv")
-    output_path_R = os.path.join(project_path, f"{output_name_R}.csv")
+    output_path_L = os.path.join(project_path, f"{output_name_D}.csv")
+    output_path_R = os.path.join(project_path, f"{output_name_S}.csv")
 
-    behavior_mapping_L =  {
-        "leftchamber": "idle",
-        "rightchamber": "other",
-        "leftinitiative": "initiative",
-        "rightinitiative": "other",
-        "leftpassive": "passive",
-        "rightpassive": "other",
-        "leftflee": "flee",
-        "rightflee": "other",
-        "middleChamber": "other"
+    behavior_mapping_D =  {
+        "dom_init": "init",
+        "sub_init": "other",
+        "dom_passive": "passive",
+        "sub_passive": "other",
+        "dom_flee": "flee",
+        "sub_flee": "other",
+        "other": "other"
     }
 
-    behavior_mapping_R =  {
-        "leftchamber": "other",
-        "rightchamber": "idle",
-        "leftinitiative": "other",
-        "rightinitiative": "initiative",
-        "leftpassive": "other",
-        "rightpassive": "passive",
-        "leftflee": "other",
-        "rightflee": "flee",
-        "middleChamber": "other"
+    behavior_mapping_S =  {
+        "dom_init": "other",
+        "sub_init": "init",
+        "dom_passive": "other",
+        "sub_passive": "passive",
+        "dom_flee": "other",
+        "sub_flee": "flee",
+        "other": "other"
     }
-    cutoff_frame = 125800
+    cutoff_frame = 36000
 
-    annot_to_csv(annot_path, fps, behavior_mapping_L, cutoff_frame, output_path_L)
-    annot_to_csv(annot_path, fps, behavior_mapping_R, cutoff_frame, output_path_R)
+    annot_to_csv(annot_path, fps, behavior_mapping_D, cutoff_frame, output_path_L)
+    annot_to_csv(annot_path, fps, behavior_mapping_S, cutoff_frame, output_path_R)

@@ -13,6 +13,7 @@ def asoid_post_process(pred_filepath, *args):
     """
     folder = os.path.dirname(pred_filepath)
     pred_filename_no_ext = os.path.basename(pred_filepath).split(".csv")[0]
+    pose_filepath = None
     for file in os.listdir(folder):
         if pred_filename_no_ext in file and "_processed.csv" in file:
             pose_filepath = os.path.join(folder, file)
@@ -80,12 +81,31 @@ def diff_between_other_and_idle(df_pose, df_pred):
         df_pred["idle"] = df_pred["other"].copy()
 
     if indices_for_other:
+        df_pred["other"] = 0
         df_pred.loc[indices_for_other, "other"] = 1
         df_pred.loc[indices_for_other, "idle"] = 0
 
+    # Exclude time column (if present) from behavior sum
+    cols_to_check = list(df_pred.columns)
+    cols_to_check.remove("time")
+    behavior_sum = df_pred[cols_to_check].sum(axis=1)
+
+    # Fix rows with more than one behavior
+    multi_behavior_mask = behavior_sum > 1
+    if multi_behavior_mask.any():
+        print(f"Found {multi_behavior_mask.sum()} frames with multiple behaviors. Adjusting...")
+        mask = multi_behavior_mask & (df_pred["other"] == 1)
+        df_pred.loc[mask, "other"] = 0
+
+    # Fix rows with no behavior
+    no_behavior_mask = behavior_sum == 0
+    if no_behavior_mask.any():
+        print(f"Found {no_behavior_mask.sum()} frames with no behavior. Setting 'other' = 1.")
+        df_pred.loc[no_behavior_mask, "other"] = 1
+
 def diff_between_sniff_and_anogenital(df_pose, df_pred, min_pow_length=105):
     """
-    Classifies continuous 'initiative' segments as 'sniff', 'anogenital', or
+    Classifies continuous 'init' segments as 'sniff', 'anogenital', or
     'mixed' (POW exchange) based on anogenital percentage.
 
     For 'mixed' segments, applies a post-processing rule to clean up short
@@ -93,7 +113,7 @@ def diff_between_sniff_and_anogenital(df_pose, df_pred, min_pow_length=105):
     
     Args:
         df_pose (pd.DataFrame): DataFrame with pose coordinates.
-        df_pred (pd.DataFrame): DataFrame with 'initiative' predictions.
+        df_pred (pd.DataFrame): DataFrame with 'init' predictions.
         min_pow_length (int): The minimum length for a block to be considered stable and not "exchanged".
     """
     # Define thresholds
@@ -101,9 +121,9 @@ def diff_between_sniff_and_anogenital(df_pose, df_pred, min_pow_length=105):
     ANOGENITAL_PERCENT_HIGH = 80
     ANOGENITAL_PERCENT_LOW = 20
 
-    # Ensure 'initiative' column exists
-    if "initiative" not in df_pred.columns or not df_pred["initiative"].any():
-        print("Warning: 'initiative' column not found or no initiative frames. Skipping classification.")
+    # Ensure 'init' column exists
+    if "init" not in df_pred.columns or not df_pred["init"].any():
+        print("Warning: 'init' column not found or no init frames. Skipping classification.")
         return
 
     try:
@@ -131,11 +151,11 @@ def diff_between_sniff_and_anogenital(df_pose, df_pred, min_pow_length=105):
     is_anogenital = dist_to_tail <= anogenital_threshold
 
     # Initialize new columns
-    df_pred["init_sniff"] = 0
-    df_pred["init_anogenital"] = 0
+    df_pred["sniff"] = 0
+    df_pred["anogenital"] = 0
 
-    # Find the start and end of continuous 'initiative' segments
-    initiative_series = df_pred["initiative"]
+    # Find the start and end of continuous 'init' segments
+    initiative_series = df_pred["init"]
     diff = initiative_series.diff().fillna(initiative_series).ne(0)
     segments = initiative_series.loc[diff].index.tolist()
 
@@ -143,7 +163,7 @@ def diff_between_sniff_and_anogenital(df_pose, df_pred, min_pow_length=105):
         start_idx = segments[i]
         end_idx = segments[i+1] - 1 if i+1 < len(segments) else df_pred.index[-1]
         
-        if df_pred.loc[start_idx, "initiative"] == 1:
+        if df_pred.loc[start_idx, "init"] == 1:
             segment_slice = slice(start_idx, end_idx)
             # Check the anogenital condition for the current segment
             anogenital_count = is_anogenital.loc[segment_slice].sum()
@@ -152,9 +172,9 @@ def diff_between_sniff_and_anogenital(df_pose, df_pred, min_pow_length=105):
 
             # Apply classification rules
             if anogenital_percentage > ANOGENITAL_PERCENT_HIGH:
-                df_pred.loc[segment_slice, "init_anogenital"] = 1
+                df_pred.loc[segment_slice, "anogenital"] = 1
             elif anogenital_percentage < ANOGENITAL_PERCENT_LOW:
-                df_pred.loc[segment_slice, "init_sniff"] = 1
+                df_pred.loc[segment_slice, "sniff"] = 1
             else: # "POW exchange" case
                 sub_segment_classifications = pd.Series(0, index=df_pred.index)
                 sub_segment_classifications.loc[is_anogenital[segment_slice].index] = is_anogenital[segment_slice].astype(int)
@@ -176,28 +196,28 @@ def diff_between_sniff_and_anogenital(df_pose, df_pred, min_pow_length=105):
                             # Re-classify based on the previous segment's value
                             # This is a simple 'Majority Wins' exchange
                             prev_val = sub_segment_classifications.loc[sub_segments_starts[j-1]]
-                            df_pred.loc[sub_start:sub_end, "init_anogenital"] = prev_val
-                            df_pred.loc[sub_start:sub_end, "init_sniff"] = 1 - prev_val
+                            df_pred.loc[sub_start:sub_end, "anogenital"] = prev_val
+                            df_pred.loc[sub_start:sub_end, "sniff"] = 1 - prev_val
                         elif j < len(sub_segments_starts) - 1:
                             # Re-classify based on the next segment's value
                             next_val = sub_segment_classifications.loc[sub_segments_starts[j+1]]
-                            df_pred.loc[sub_start:sub_end, "init_anogenital"] = next_val
-                            df_pred.loc[sub_start:sub_end, "init_sniff"] = 1 - next_val
+                            df_pred.loc[sub_start:sub_end, "anogenital"] = next_val
+                            df_pred.loc[sub_start:sub_end, "sniff"] = 1 - next_val
                         else:
                             # Fallback: keep the original classification if no surrounding context exists
-                            df_pred.loc[sub_start:sub_end, "init_anogenital"] = sub_segment_classifications.loc[sub_start]
-                            df_pred.loc[sub_start:sub_end, "init_sniff"] = 1 - sub_segment_classifications.loc[sub_start]
+                            df_pred.loc[sub_start:sub_end, "anogenital"] = sub_segment_classifications.loc[sub_start]
+                            df_pred.loc[sub_start:sub_end, "sniff"] = 1 - sub_segment_classifications.loc[sub_start]
                     else:
                         # Keep the original classification for long enough segments
                         is_anogenital_val = is_anogenital.loc[sub_start]
-                        df_pred.loc[sub_start:sub_end, "init_anogenital"] = int(is_anogenital_val)
-                        df_pred.loc[sub_start:sub_end, "init_sniff"] = int(not is_anogenital_val)
+                        df_pred.loc[sub_start:sub_end, "anogenital"] = int(is_anogenital_val)
+                        df_pred.loc[sub_start:sub_end, "sniff"] = int(not is_anogenital_val)
 
-    df_pred.drop("initiative", axis=1, inplace=True)
+    df_pred.drop("init", axis=1, inplace=True)
 
 if __name__ == "__main__":
     folder = "D:/Project/A-SOID/250720-Social/videos"
     for file in os.listdir(folder):
         if "-first3h-D.csv" in file or "-first3h-S.csv" in file:
             filepath = os.path.join(folder, file)
-            asoid_post_process(filepath, "update_idle", "update_social")
+            asoid_post_process(filepath, "update_idle")
