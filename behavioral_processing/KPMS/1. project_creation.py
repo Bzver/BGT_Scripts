@@ -5,13 +5,13 @@ import numpy as np
 from scipy.io import loadmat, savemat
 
 MODE = "dannce"   # "dannce" or "sleap"
-PROJECT_DIR = "/mnt/d/Project/Keypoint-Moseq/"
+PROJECT_DIR = "/mnt/d/Project/Keypoint-Moseq/20250913"
 VIDEO_DIR = ""
 KEYPOINT_DATA = "/mnt/d/Project/SDANNCE-Models/"  # can be a file, a directory, or a list of files
 
 # SDANNCE Config
-SELECTION = "SD-20250620"
-BP = [  # KPMS's native dannce config suppot is obsolete, had to do it all manually
+SELECTION = "SD-"
+BP = [  # KPMS's native dannce config suppot is obsolete for SDANNCE, had to do it all manually
     "EarL", "EarR", "Snout", "SpineF", "SpineM",
     "Tail(base)", "Tail(mid)", "Tail(end)",
     "ForePawL", "ForeLimbL", "ForePawR", "ForeLimbR",
