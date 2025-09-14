@@ -2,7 +2,7 @@ import os
 import subprocess
 from tqdm import tqdm
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk # Added ttk for progress later if needed
+from tkinter import filedialog, messagebox
 import tempfile
 from PIL import Image, ImageTk
 
@@ -61,7 +61,7 @@ def crop_resize_and_convert_videos(input_folder, output_folder, crop_left, crop_
 
 
         if progress_callback:
-            progress_callback(i, total_files, f"Processing: {filename}")
+            progress_callback(i, total_files, f"Processing, check terminal for detail: {filename}")
 
         try:
             # Get video duration using ffprobe
@@ -178,7 +178,8 @@ class App:
         self.crop_bottom = tk.IntVar(value=10)
         self.target_width = tk.IntVar(value=640)
         self.target_height = tk.IntVar(value=480)
-        self.output_suffix = tk.StringVar(value="-conv.mp4") # <-- New Variable
+        self.auto_calculate_target_dims = tk.BooleanVar(value=False)
+        self.output_suffix = tk.StringVar(value="-conv.mp4")
 
         # Internal state for preview
         self.preview_image_path = None
@@ -231,15 +232,18 @@ class App:
 
         # Target Size Parameters
         tk.Label(param_frame, text="Target Size (pixels):").grid(row=3, column=0, columnspan=4, pady=(10, 5), sticky="w")
-        tk.Label(param_frame, text="Width:").grid(row=4, column=0, padx=5, pady=2, sticky="e")
-        tk.Entry(param_frame, textvariable=self.target_width, width=7).grid(row=4, column=1, padx=5, pady=2, sticky="w")
-        tk.Label(param_frame, text="Height:").grid(row=4, column=2, padx=5, pady=2, sticky="e")
-        tk.Entry(param_frame, textvariable=self.target_height, width=7).grid(row=4, column=3, padx=5, pady=2, sticky="w")
+        tk.Checkbutton(param_frame, text="Auto-calculate Target Size", variable=self.auto_calculate_target_dims, command=self.update_target_size_fields).grid(row=4, column=0, columnspan=4, pady=(5, 0), sticky="w")
 
-        # --- Output Suffix Parameter --- <--- NEW WIDGETS
-        tk.Label(param_frame, text="Output Suffix:").grid(row=5, column=0, padx=5, pady=(10,2), sticky="e")
-        tk.Entry(param_frame, textvariable=self.output_suffix, width=15).grid(row=5, column=1, columnspan=3, padx=5, pady=(10,2), sticky="w")
+        tk.Label(param_frame, text="Width:").grid(row=5, column=0, padx=5, pady=2, sticky="e")
+        self.target_width_entry = tk.Entry(param_frame, textvariable=self.target_width, width=7)
+        self.target_width_entry.grid(row=5, column=1, padx=5, pady=2, sticky="w")
+        tk.Label(param_frame, text="Height:").grid(row=5, column=2, padx=5, pady=2, sticky="e")
+        self.target_height_entry = tk.Entry(param_frame, textvariable=self.target_height, width=7)
+        self.target_height_entry.grid(row=5, column=3, padx=5, pady=2, sticky="w")
 
+        # --- Output Suffix Parameter ---
+        tk.Label(param_frame, text="Output Suffix:").grid(row=6, column=0, padx=5, pady=(10,2), sticky="e")
+        tk.Entry(param_frame, textvariable=self.output_suffix, width=15).grid(row=6, column=1, columnspan=3, padx=5, pady=(10,2), sticky="w")
         # --- Preview Frame Widgets ---
         preview_controls_frame = tk.Frame(preview_frame)
         preview_controls_frame.pack(fill=tk.X, pady=(0, 5))
@@ -373,6 +377,19 @@ class App:
                 return
             self.original_preview_dims = dims
 
+            if self.auto_calculate_target_dims.get():
+                c_left = self._get_int_param(self.crop_left, "Crop Left")
+                c_top = self._get_int_param(self.crop_top, "Crop Top")
+                c_right = self._get_int_param(self.crop_right, "Crop Right")
+                c_bottom = self._get_int_param(self.crop_bottom, "Crop Bottom")
+
+                orig_w, orig_h = self.original_preview_dims
+                calculated_width = max(0, orig_w - c_left - c_right)
+                calculated_height = max(0, orig_h - c_top - c_bottom)
+
+                self.target_width.set(calculated_width)
+                self.target_height.set(calculated_height)
+ 
         try:
             img = Image.open(self.preview_image_path)
             img.load() # Ensure image data is loaded
@@ -465,6 +482,15 @@ class App:
             print(f"Error drawing crop rectangle: {e}")
             self.preview_canvas.create_text(10, 10, anchor=tk.NW, text="Error drawing crop", fill="red", font=("Arial", 10, "bold"))
 
+    def update_target_size_fields(self):
+        """Enables/disables target width/height entry fields based on auto-calculate checkbox."""
+        if self.auto_calculate_target_dims.get():
+            self.target_width_entry.config(state="readonly")
+            self.target_height_entry.config(state="readonly")
+            self.update_preview(force_extract=False) # Trigger update to set calculated values
+        else:
+            self.target_width_entry.config(state="normal")
+            self.target_height_entry.config(state="normal")
 
     def update_progress(self, current, total, message=""):
         """Callback function to update progress indicators."""
@@ -493,18 +519,20 @@ class App:
             c_bottom = self._get_int_param(self.crop_bottom, "Crop Bottom")
             t_width = self._get_int_param(self.target_width, "Target Width")
             t_height = self._get_int_param(self.target_height, "Target Height")
-            out_suffix = self.output_suffix.get() # <-- Get suffix value
+            out_suffix = self.output_suffix.get()
 
             # Basic validation
             if t_width <= 0 or t_height <= 0:
-                 raise ValueError("Target Width and Height must be positive integers.")
-            
-            # Disable button during processing
-            self.run_button.config(state=tk.DISABLED, text="Processing...")
-            self.update_progress(0, 0, "Starting...") # Initial progress update
-            self.master.update_idletasks() # Ensure GUI updates
+                raise ValueError("Target Width and Height must be positive integers.")
 
-            # Run the main function with progress callback
+            # Disable button and update UI
+            self.run_button.config(state=tk.DISABLED, text="Processing...")
+            self.update_progress(0, 0, "Starting batch processing...")
+
+            # --- HIDE THE WINDOW ---
+            self.master.withdraw()
+
+            # --- RUN PROCESSING BLOCKINGLY (IN MAIN THREAD) ---
             processed, skipped, errors = crop_resize_and_convert_videos(
                 in_folder,
                 out_folder,
@@ -514,27 +542,28 @@ class App:
                 c_bottom,
                 t_width,
                 t_height,
-                output_suffix=out_suffix, # <-- Pass the suffix
-                progress_callback=self.update_progress # Pass the callback
+                output_suffix=out_suffix,
+                progress_callback=self.update_progress
             )
+
+            # --- SHOW THE WINDOW AGAIN ---
+            self.master.deiconify()
 
             # Show summary message
             messagebox.showinfo("Complete", f"Processing finished.\n\nProcessed: {processed}\nSkipped: {skipped}\nErrors: {errors}\n\nCheck console for details.")
 
-
         except ValueError as e:
-             messagebox.showerror("Invalid Input", f"Error in parameters: {e}")
-             self.update_progress(0, 0, "Error.") # Update progress on error
+            messagebox.showerror("Invalid Input", f"Error in parameters: {e}")
+            self.update_progress(0, 0, "Error.")
+            self.master.deiconify()  # Ensure window reappears on error
         except Exception as e:
             messagebox.showerror("Error", f"An unexpected error occurred: {e}")
-            print(f"Unexpected error during run_processing setup or execution: {e}") # Log details
-            self.update_progress(0, 0, "Error.") # Update progress on error
+            print(f"Unexpected error during run_processing: {e}")
+            self.update_progress(0, 0, "Error.")
+            self.master.deiconify()  # Ensure window reappears on error
         finally:
-             # Re-enable button regardless of success or failure
+            # Re-enable button regardless of outcome
             self.run_button.config(state=tk.NORMAL, text="Run Processing")
-            # Optional: Clear progress label after a delay or keep the final message
-            # self.master.after(3000, lambda: self.update_progress(0, 0, ""))
-
 
 if __name__ == "__main__":
     root = tk.Tk()
