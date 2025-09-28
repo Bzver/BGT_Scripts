@@ -1,10 +1,13 @@
 import os
 import subprocess
+
 from tqdm import tqdm
+
 import tkinter as tk
 from tkinter import filedialog, messagebox
-import tempfile
 from PIL import Image, ImageTk
+
+import tempfile
 
 def crop_resize_and_convert_videos(input_folder, output_folder, crop_left, crop_top, crop_right, crop_bottom, target_width, target_height, output_suffix="-conv.mp4", progress_callback=None):
     """Crops, resizes, and converts videos using FFmpeg."""
@@ -97,11 +100,16 @@ def crop_resize_and_convert_videos(input_folder, output_folder, crop_left, crop_
                 continue
 
             ffmpeg_command = [
-                'ffmpeg', '-y', '-i', input_path,
-                '-vf', f'crop={crop_width}:{crop_height}:{crop_x}:{crop_y},scale={target_width}:{target_height}',
-                '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-preset', 'superfast',
-               '-crf', '23', '-c:a', 'copy',
-               '-progress', 'pipe:1', '-nostats', output_path
+                "ffmpeg", "-y",
+                "-hwaccel", "cuda",
+                "-hwaccel_output_format", "cuda",
+                "-i", input_path,
+                "-vf", f"hwdownload,format=nv12,crop={crop_width}:{crop_height}:{crop_x}:{crop_y},scale={target_width}:{target_height},hwupload_cuda",
+                "-c:v", "h264_nvenc",
+                "-preset", "p7",
+                "-global_quality", "18",
+                "-rc", "vbr_hq",
+                output_path
             ]
             process = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, creationflags=subprocess.CREATE_NO_WINDOW)
 
@@ -122,8 +130,8 @@ def crop_resize_and_convert_videos(input_folder, output_folder, crop_left, crop_
 
         except subprocess.CalledProcessError as e:
             print(f"Error processing {filename}: {e}")
-            if e.cmd and e.cmd[0] == 'ffprobe' and not ffprobe_found: pass # Already handled
-            elif e.cmd and e.cmd[0] == 'ffmpeg' and not ffmpeg_found: pass # Already handled
+            if e.cmd and e.cmd[0] == 'ffprobe' and not ffprobe_found: pass
+            elif e.cmd and e.cmd[0] == 'ffmpeg' and not ffmpeg_found: pass
             else:
                 print(f"  Command failed: {' '.join(e.cmd)}")
                 if e.stderr: print(f"  FFmpeg/FFprobe Error Output:\n{e.stderr.decode(errors='ignore')}") # Decode stderr
@@ -215,35 +223,51 @@ class App:
         top_frame.grid_columnconfigure(1, weight=1) # Allow entry to expand
 
         # --- Parameter Frame Widgets ---
-        # Crop Parameters
-        tk.Label(param_frame, text="Crop Pixels From:").grid(row=0, column=0, columnspan=4, pady=(0, 5), sticky="w")
-        tk.Label(param_frame, text="Left:").grid(row=1, column=0, padx=5, pady=2, sticky="e")
-        tk.Entry(param_frame, textvariable=self.crop_left, width=7).grid(row=1, column=1, padx=5, pady=2, sticky="w")
+        param_frame.grid_columnconfigure(1, weight=1)
+        param_frame.grid_columnconfigure(1, weight=1)
+
+        # ========== LEFT COLUMN: Crop Parameters ==========
+        tk.Label(param_frame, text="Crop Pixels From:", anchor="w").grid(row=0, column=0, padx=5, pady=(0, 5), sticky="w")
+
+        tk.Label(param_frame, text="Left:").grid(row=1, column=0, padx=(2, 2), pady=2, sticky="e")
+        tk.Entry(param_frame, textvariable=self.crop_left, width=7).grid(row=1, column=1, padx=(2, 5), pady=2, sticky="w")
         self.crop_left.trace_add("write", self.update_preview)
-        tk.Label(param_frame, text="Top:").grid(row=1, column=2, padx=5, pady=2, sticky="e")
-        tk.Entry(param_frame, textvariable=self.crop_top, width=7).grid(row=1, column=3, padx=5, pady=2, sticky="w")
+
+        tk.Label(param_frame, text="Top:").grid(row=2, column=0, padx=(2, 2), pady=2, sticky="e")
+        tk.Entry(param_frame, textvariable=self.crop_top, width=7).grid(row=2, column=1, padx=(2, 5), pady=2, sticky="w")
         self.crop_top.trace_add("write", self.update_preview)
-        tk.Label(param_frame, text="Right:").grid(row=2, column=0, padx=5, pady=2, sticky="e")
-        tk.Entry(param_frame, textvariable=self.crop_right, width=7).grid(row=2, column=1, padx=5, pady=2, sticky="w")
+
+        tk.Label(param_frame, text="Right:").grid(row=3, column=0, padx=(2, 2), pady=2, sticky="e")
+        tk.Entry(param_frame, textvariable=self.crop_right, width=7).grid(row=3, column=1, padx=(2, 5), pady=2, sticky="w")
         self.crop_right.trace_add("write", self.update_preview)
-        tk.Label(param_frame, text="Bottom:").grid(row=2, column=2, padx=5, pady=2, sticky="e")
-        tk.Entry(param_frame, textvariable=self.crop_bottom, width=7).grid(row=2, column=3, padx=5, pady=2, sticky="w")
+
+        tk.Label(param_frame, text="Bottom:").grid(row=4, column=0, padx=(2, 2), pady=2, sticky="e")
+        tk.Entry(param_frame, textvariable=self.crop_bottom, width=7).grid(row=4, column=1, padx=(2, 5), pady=2, sticky="w")
         self.crop_bottom.trace_add("write", self.update_preview)
 
-        # Target Size Parameters
-        tk.Label(param_frame, text="Target Size (pixels):").grid(row=3, column=0, columnspan=4, pady=(10, 5), sticky="w")
-        tk.Checkbutton(param_frame, text="Auto-calculate Target Size", variable=self.auto_calculate_target_dims, command=self.update_target_size_fields).grid(row=4, column=0, columnspan=4, pady=(5, 0), sticky="w")
+        # ========== RIGHT COLUMN: Target Size Parameters ==========
+        tk.Label(param_frame, text="Target Size (pixels):", anchor="w").grid(row=0, column=2, padx=(15, 5), pady=(0, 5), sticky="w")
 
-        tk.Label(param_frame, text="Width:").grid(row=5, column=0, padx=5, pady=2, sticky="e")
+        tk.Label(param_frame, text="Width:").grid(row=3, column=2, padx=(5, 2), pady=2, sticky="e")
         self.target_width_entry = tk.Entry(param_frame, textvariable=self.target_width, width=7)
-        self.target_width_entry.grid(row=5, column=1, padx=5, pady=2, sticky="w")
-        tk.Label(param_frame, text="Height:").grid(row=5, column=2, padx=5, pady=2, sticky="e")
+        self.target_width_entry.grid(row=3, column=3, padx=(2, 5), pady=2, sticky="w")
+
+        tk.Label(param_frame, text="Height:").grid(row=4, column=2, padx=(5, 2), pady=2, sticky="e")
         self.target_height_entry = tk.Entry(param_frame, textvariable=self.target_height, width=7)
-        self.target_height_entry.grid(row=5, column=3, padx=5, pady=2, sticky="w")
+        self.target_height_entry.grid(row=4, column=3, padx=(2, 5), pady=2, sticky="w")
+
+        tk.Label(param_frame, text="Width:").grid(row=2, column=2, padx=(5, 2), pady=2, sticky="e")
+        self.target_width_entry = tk.Entry(param_frame, textvariable=self.target_width, width=7)
+        self.target_width_entry.grid(row=2, column=3, padx=(2, 5), pady=2, sticky="w")
+
+        tk.Label(param_frame, text="Height:").grid(row=3, column=2, padx=(5, 2), pady=2, sticky="e")
+        self.target_height_entry = tk.Entry(param_frame, textvariable=self.target_height, width=7)
+        self.target_height_entry.grid(row=3, column=3, padx=(2, 5), pady=2, sticky="w")
 
         # --- Output Suffix Parameter ---
         tk.Label(param_frame, text="Output Suffix:").grid(row=6, column=0, padx=5, pady=(10,2), sticky="e")
         tk.Entry(param_frame, textvariable=self.output_suffix, width=15).grid(row=6, column=1, columnspan=3, padx=5, pady=(10,2), sticky="w")
+
         # --- Preview Frame Widgets ---
         preview_controls_frame = tk.Frame(preview_frame)
         preview_controls_frame.pack(fill=tk.X, pady=(0, 5))
@@ -288,9 +312,9 @@ class App:
                 raise ValueError(f"{name} cannot be negative.")
             return val
         except tk.TclError:
-            raise ValueError(f"Invalid integer value for {name}.")
+            pass
         except ValueError as e:
-             raise ValueError(f"Invalid value for {name}: {e}")
+            raise ValueError(f"Invalid value for {name}: {e}")
 
     def _extract_frame(self, video_path, output_image_path, time_offset="00:00:01"):
         """Extracts a single frame using FFmpeg."""
@@ -326,7 +350,7 @@ class App:
             width, height = map(int, probe_result.stdout.strip().split('x'))
             return width, height
         except FileNotFoundError:
-            messagebox.showerror("Error", "ffprobe not found. Make sure FFmpeg (which includes ffprobe) is installed and in your system's PATH.")
+            messagebox.showerror("Error", "ffprobe not found. Make sure FFmpeg is installed and in your system's PATH.")
             return None
         except (subprocess.CalledProcessError, ValueError, Exception) as e:
             print(f"Error getting dimensions for {os.path.basename(video_path)}: {e}")
@@ -569,7 +593,7 @@ if __name__ == "__main__":
     root = tk.Tk()
     app = App(root)
     root.mainloop()
-    # Clean up temporary preview file on exit (if it exists and wasn't cleaned)
+    # Clean up temporary preview file on exit
     if hasattr(app, 'preview_image_path') and app.preview_image_path and os.path.exists(app.preview_image_path):
          try:
              os.remove(app.preview_image_path)
