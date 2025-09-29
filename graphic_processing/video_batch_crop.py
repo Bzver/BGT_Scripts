@@ -256,14 +256,6 @@ class App:
         self.target_height_entry = tk.Entry(param_frame, textvariable=self.target_height, width=7)
         self.target_height_entry.grid(row=4, column=3, padx=(2, 5), pady=2, sticky="w")
 
-        tk.Label(param_frame, text="Width:").grid(row=2, column=2, padx=(5, 2), pady=2, sticky="e")
-        self.target_width_entry = tk.Entry(param_frame, textvariable=self.target_width, width=7)
-        self.target_width_entry.grid(row=2, column=3, padx=(2, 5), pady=2, sticky="w")
-
-        tk.Label(param_frame, text="Height:").grid(row=3, column=2, padx=(5, 2), pady=2, sticky="e")
-        self.target_height_entry = tk.Entry(param_frame, textvariable=self.target_height, width=7)
-        self.target_height_entry.grid(row=3, column=3, padx=(2, 5), pady=2, sticky="w")
-
         # --- Output Suffix Parameter ---
         tk.Label(param_frame, text="Output Suffix:").grid(row=6, column=0, padx=5, pady=(10,2), sticky="e")
         tk.Entry(param_frame, textvariable=self.output_suffix, width=15).grid(row=6, column=1, columnspan=3, padx=5, pady=(10,2), sticky="w")
