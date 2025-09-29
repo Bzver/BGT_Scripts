@@ -248,6 +248,8 @@ class App:
         # ========== RIGHT COLUMN: Target Size Parameters ==========
         tk.Label(param_frame, text="Target Size (pixels):", anchor="w").grid(row=0, column=2, padx=(15, 5), pady=(0, 5), sticky="w")
 
+        tk.Checkbutton(param_frame, text="Auto-calculate Target Size", variable=self.auto_calculate_target_dims, command=self.update_target_size_fields).grid(row=2, column=2, columnspan=4, pady=(5, 0), sticky="w")
+
         tk.Label(param_frame, text="Width:").grid(row=3, column=2, padx=(5, 2), pady=2, sticky="e")
         self.target_width_entry = tk.Entry(param_frame, textvariable=self.target_width, width=7)
         self.target_width_entry.grid(row=3, column=3, padx=(2, 5), pady=2, sticky="w")
