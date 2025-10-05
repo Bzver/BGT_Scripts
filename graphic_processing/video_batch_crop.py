@@ -9,7 +9,7 @@ from PIL import Image, ImageTk
 
 import tempfile
 
-def crop_resize_and_convert_videos(input_folder, output_folder, crop_left, crop_top, crop_right, crop_bottom, target_width, target_height, output_suffix="-conv.mp4", progress_callback=None):
+def crop_resize_and_convert_videos(input_folder, output_folder, crop_left, crop_top, crop_right, crop_bottom, target_width, target_height, fps, output_suffix="-conv.mp4", progress_callback=None):
     """Crops, resizes, and converts videos using FFmpeg."""
     if not input_folder or not output_folder:
         messagebox.showerror("Error", "Input and Output folders must be selected.")
@@ -104,6 +104,7 @@ def crop_resize_and_convert_videos(input_folder, output_folder, crop_left, crop_
                 "-hwaccel", "cuda",
                 "-hwaccel_output_format", "cuda",
                 "-i", input_path,
+                "-r", str(fps),
                 "-vf", f"hwdownload,format=nv12,crop={crop_width}:{crop_height}:{crop_x}:{crop_y},scale={target_width}:{target_height},hwupload_cuda",
                 "-c:v", "h264_nvenc",
                 "-preset", "p7",
@@ -188,6 +189,7 @@ class App:
         self.target_height = tk.IntVar(value=480)
         self.auto_calculate_target_dims = tk.BooleanVar(value=False)
         self.output_suffix = tk.StringVar(value="-conv.mp4")
+        self.fps = tk.DoubleVar(value=20.0)
 
         # Internal state for preview
         self.preview_image_path = None
@@ -246,21 +248,25 @@ class App:
         self.crop_bottom.trace_add("write", self.update_preview)
 
         # ========== RIGHT COLUMN: Target Size Parameters ==========
-        tk.Label(param_frame, text="Target Size (pixels):", anchor="w").grid(row=0, column=2, padx=(15, 5), pady=(0, 5), sticky="w")
+        tk.Label(param_frame, text="Target Size (pixels):", anchor="w").grid(row=0, column=2, padx=(10, 5), pady=(0, 5), sticky="w")
 
-        tk.Checkbutton(param_frame, text="Auto-calculate Target Size", variable=self.auto_calculate_target_dims, command=self.update_target_size_fields).grid(row=2, column=2, columnspan=4, pady=(5, 0), sticky="w")
+        tk.Checkbutton(param_frame, text="Auto-calculate Target Size", variable=self.auto_calculate_target_dims, command=self.update_target_size_fields).grid(row=1, column=2, padx=(5, 5), pady=(5, 0), sticky="e")
 
-        tk.Label(param_frame, text="Width:").grid(row=3, column=2, padx=(5, 2), pady=2, sticky="e")
+        tk.Label(param_frame, text="Width:").grid(row=3, column=1, padx=(5, 2), pady=2, sticky="e")
         self.target_width_entry = tk.Entry(param_frame, textvariable=self.target_width, width=7)
-        self.target_width_entry.grid(row=3, column=3, padx=(2, 5), pady=2, sticky="w")
+        self.target_width_entry.grid(row=3, column=2, padx=(2, 5), pady=2, sticky="w")
 
-        tk.Label(param_frame, text="Height:").grid(row=4, column=2, padx=(5, 2), pady=2, sticky="e")
+        tk.Label(param_frame, text="Height:").grid(row=4, column=1, padx=(5, 2), pady=2, sticky="e")
         self.target_height_entry = tk.Entry(param_frame, textvariable=self.target_height, width=7)
-        self.target_height_entry.grid(row=4, column=3, padx=(2, 5), pady=2, sticky="w")
+        self.target_height_entry.grid(row=4, column=2, padx=(2, 5), pady=2, sticky="w")
 
         # --- Output Suffix Parameter ---
         tk.Label(param_frame, text="Output Suffix:").grid(row=6, column=0, padx=5, pady=(10,2), sticky="e")
         tk.Entry(param_frame, textvariable=self.output_suffix, width=15).grid(row=6, column=1, columnspan=3, padx=5, pady=(10,2), sticky="w")
+
+        # --- FPS Parameter ---
+        tk.Label(param_frame, text="Output FPS:").grid(row=6, column=1, padx=5, pady=(10,2), sticky="e")
+        tk.Entry(param_frame, textvariable=self.fps, width=10).grid(row=6, column=2, columnspan=2, padx=5, pady=(10,2), sticky="w")
 
         # --- Preview Frame Widgets ---
         preview_controls_frame = tk.Frame(preview_frame)
@@ -530,6 +536,13 @@ class App:
             return
 
         try:
+            fps_val = self.fps.get()
+            if fps_val <= 0:
+                raise ValueError("FPS must be positive.")
+        except tk.TclError:
+            raise ValueError("Invalid FPS value.")        
+
+        try:
             # Get parameters from the GUI using helper
             c_left = self._get_int_param(self.crop_left, "Crop Left")
             c_top = self._get_int_param(self.crop_top, "Crop Top")
@@ -552,7 +565,7 @@ class App:
 
             # --- RUN PROCESSING BLOCKINGLY (IN MAIN THREAD) ---
             processed, skipped, errors = crop_resize_and_convert_videos(
-                in_folder,
+                in_folder, 
                 out_folder,
                 c_left,
                 c_top,
@@ -560,6 +573,7 @@ class App:
                 c_bottom,
                 t_width,
                 t_height,
+                fps=fps_val,
                 output_suffix=out_suffix,
                 progress_callback=self.update_progress
             )
