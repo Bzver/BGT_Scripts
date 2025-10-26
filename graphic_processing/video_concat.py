@@ -67,6 +67,17 @@ def concat_videos(input_dir, output_file=None, extensions=None):
             os.remove(list_file)
 
 if __name__ == "__main__":
-    input_folder = "D:\Data\Videos\\20250913 Marathon\c55-S-Top"
-    output_file = ""
-    concat_videos(input_folder, output_file)
+    # # Single folder mode
+    # input_folder = "D:\Data\Videos\\20250913 Marathon\c55-S-Top"
+    # output_file = ""
+    # concat_videos(input_folder, output_file)
+
+    # Batch folder mode
+    prime_folder = "D:\Data\Videos\\20251013 Marathon\\N1"
+    for f in os.listdir(prime_folder):
+        if not os.path.isdir(os.path.join(prime_folder, f)):
+            continue
+
+        input_folder = os.path.join(prime_folder, f)
+        output_file = ""
+        concat_videos(input_folder, output_file)
