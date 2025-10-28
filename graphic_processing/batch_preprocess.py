@@ -154,7 +154,7 @@ class App:
     def __init__(self, master):
         self.master = master
         master.title("Batch Video Preprocessor")
-        master.geometry("500x300") # Adjusted size for simpler GUI
+        master.geometry("500x500")
 
         self.input_folder = tk.StringVar()
         self.target_width = tk.IntVar(value=640)
