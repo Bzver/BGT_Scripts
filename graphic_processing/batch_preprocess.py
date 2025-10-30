@@ -76,21 +76,21 @@ def preprocess_videos(input_folder, target_width, target_height, fps, output_suf
 
             # Build video filter chain
             if use_original_dims:
-                vf_filter = "hwdownload,format=nv12,hwupload_cuda"
+                vf_filter = "hwdownload,format=nv12,fps={fps},hwupload_cuda"
             else:
-                vf_filter = f"hwdownload,format=nv12,scale={target_width}:{target_height},hwupload_cuda"
+                vf_filter = f"hwdownload,format=nv12,scale={target_width}:{target_height},fps={fps},hwupload_cuda"
 
             ffmpeg_command = [
                 "ffmpeg", "-y",
                 "-hwaccel", "cuda",
                 "-hwaccel_output_format", "cuda",
                 "-i", input_path,
-                "-r", str(fps),
                 "-vf", vf_filter,
                 "-c:v", "h264_nvenc",
                 "-preset", "p7",
                 "-global_quality", "18",
                 "-rc", "vbr_hq",
+                "-an",
                 output_path
             ]
             process = subprocess.Popen(ffmpeg_command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True, creationflags=subprocess.CREATE_NO_WINDOW)
