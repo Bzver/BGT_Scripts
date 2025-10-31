@@ -83,10 +83,23 @@ if __name__ == "__main__":
     # concat_videos(input_folder, output_file)
 
     # Batch folder mode
-    prime_folder = "D:/Data\Videos\\20251013 Marathon\\N2"
-    for f in os.listdir(prime_folder):
-        if not os.path.isdir(os.path.join(prime_folder, f)):
-            continue
+    # prime_folder = "D:/Data\Videos\\20251013 Marathon\\N2"
+    # for f in os.listdir(prime_folder):
+    #     if not os.path.isdir(os.path.join(prime_folder, f)):
+    #         continue
 
-        input_folder = os.path.join(prime_folder, f)
-        concat_videos(input_folder, file_suffix="-proc-resized")
+    #     input_folder = os.path.join(prime_folder, f)
+    #     concat_videos(input_folder, file_suffix="-proc-resized")
+
+    # Rescursive folder mode
+    prime_folder = "D:\Data\Videos\\2B_Proc"
+    for f in os.listdir(prime_folder):
+        pf = os.path.join(prime_folder, f)
+        if not os.path.isdir(pf):
+            continue
+        for sf in os.listdir(pf):
+            psf = os.path.join(pf, sf)
+            if not os.path.isdir(psf):
+                continue
+            input_folder = psf
+            concat_videos(input_folder, file_suffix="-proc")
