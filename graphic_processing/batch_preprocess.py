@@ -63,6 +63,11 @@ def preprocess_videos(input_folder, target_width, target_height, fps, output_suf
              output_filename += ".mp4"
         output_path = os.path.join(input_dir, output_filename)
 
+        if os.path.exists(output_path):
+            print(f"Skipping (already exists): {output_filename}")
+            skipped_count += 1
+            continue
+
         if progress_callback:
             progress_callback(i, total_files, f"Processing, check terminal for detail: {filename}")
 
@@ -76,7 +81,7 @@ def preprocess_videos(input_folder, target_width, target_height, fps, output_suf
 
             # Build video filter chain
             if use_original_dims:
-                vf_filter = "hwdownload,format=nv12,fps={fps},hwupload_cuda"
+                vf_filter = f"hwdownload,format=nv12,fps={fps},hwupload_cuda"
             else:
                 vf_filter = f"hwdownload,format=nv12,scale={target_width}:{target_height},fps={fps},hwupload_cuda"
 
@@ -154,7 +159,7 @@ class App:
     def __init__(self, master):
         self.master = master
         master.title("Batch Video Preprocessor")
-        master.geometry("500x500")
+        master.geometry("500x350")
 
         self.input_folder = tk.StringVar()
         self.target_width = tk.IntVar(value=640)
@@ -201,7 +206,7 @@ class App:
         tk.Checkbutton(param_frame, text="Use Original Dimensions (No Resizing)", variable=self.use_original_dims).grid(row=5, column=0, columnspan=2, padx=5, pady=(5,0), sticky="w")
 
         # --- Action Frame Widgets ---
-        self.run_button = tk.Button(action_frame, text="Run Preprocessing", command=self.run_processing, width=20, height=2)
+        self.run_button = tk.Button(action_frame, text="Run Preprocessing", command=self.run_processing, width=45, height=2, bg="#4CAF50", fg="white", font=("Arial", 18, "bold"))
         self.run_button.pack(side=tk.RIGHT, padx=5)
 
         self.progress_label = tk.Label(action_frame, text="")
