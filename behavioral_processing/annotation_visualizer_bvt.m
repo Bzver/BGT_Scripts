@@ -2,7 +2,11 @@ clear all;
 close all;
 
 %%
-annot_mat = "D:\DGH\Data\Videos\20250918 Marathon\30T_aaa_2025103012_combined_cut.mat";
+[filename, pathname] = uigetfile('*.mat', 'Select MAT file');
+if isequal(filename, 0)
+    error('No file selected. Execution aborted.');
+end
+annot_mat = fullfile(pathname, filename);
 
 fps = 10;
 pin_duration_seconds = 600;
