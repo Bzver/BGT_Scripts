@@ -60,8 +60,8 @@ class Bvt2Mat:
         return behav_array
 
     def _determine_mat_name(self) -> str:
-        str1 = os.path.basename(self.dfp).replace("_workspace.pkl", "")
-        str2 = os.path.basename(self.sfp).replace("_workspace.pkl", "")
+        str1 = os.path.basename(self.dfp).replace("_workspace", "").replace(".pkl", "")
+        str2 = os.path.basename(self.sfp).replace("_workspace", "").replace(".pkl", "")
         matcher = difflib.SequenceMatcher(None, str1, str2)
         matches = matcher.get_matching_blocks()
         mat_filename = ""
@@ -86,10 +86,12 @@ class Bvt2Mat:
                 "sub_h": self.sub.heatmap,
             }
             locomotion_struct = {
-                "dom_td": self.dom.total_distance,
-                "sub_td": self.sub.total_distance,
-                "dom_loco": self.dom.get_loco_for_saving(),
-                "sub_loco": self.sub.get_loco_for_saving(),
+                "dom_avg": self.dom.average_speed,
+                "sub_avg": self.sub.average_speed,
+                "dom_avgm": self.dom.avg_moving_speed,
+                "sub_avgm": self.sub.avg_moving_speed,
+                "dom_mperc": self.dom.moving_perc,
+                "sub_mperc": self.sub.moving_perc,
             }
             mat_to_save = {
                 "annotation": annotation_struct,
@@ -118,7 +120,8 @@ class Bvt_Process:
         self.centroids = None
         self.heatmap = None
         self.locomotion = None 
-        self.total_distance = 0.0
+        self.average_speed = 0.0
+        self.moving_perc = 0.0
         self.overlay = None
 
         with open(self.fp, 'rb') as f:
@@ -217,27 +220,30 @@ class Bvt_Process:
         end_indices = np.concatenate((changed_indices, [self.blob_array.shape[0]-1]))
 
         total_dist = 0.0
+        moving_frames = 0
+        total_observed_frames = 0
 
         for i in range(len(start_indices)):
             start_idx, end_idx = start_indices[i], end_indices[i]
 
-            if self.blob_array[start_indices[i], 0] != 1: # No need to increment centroid idx because all centroids were recorded when self.blob_array[n, 0] == 1
+            if self.blob_array[start_indices[i], 0] != 1:
                 continue
             if end_idx - start_idx == 0:
                 continue
 
-            steps = np.linalg.norm(np.diff(self.centroids[start_idx:end_idx+1]), axis=1)
+            steps = np.linalg.norm(np.diff(self.centroids[start_idx:end_idx+1], axis=0), axis=1)
 
             block_distance = np.sum(steps)
             total_dist += block_distance
+            moving_frames += np.sum(steps>0)
+            total_observed_frames += len(steps)
 
-            self.locomotion[start_idx:end_idx+1] = steps
+            self.locomotion[start_idx+1:end_idx+1] = steps
             
-        self.total_distance = total_dist
+        self.average_speed = total_dist / total_observed_frames
+        self.avg_moving_speed = total_dist / moving_frames
+        self.moving_perc = moving_frames / total_observed_frames * 100
 
-    def get_loco_for_saving(self) -> np.ndarray:
-        return self.locomotion[self.locomotion != -1]
-    
 
 if __name__ == "__main__":
     print("Please select the DOMINANT animal workspace file (.pkl)")
