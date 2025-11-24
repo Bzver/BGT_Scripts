@@ -2,7 +2,7 @@ clear all;
 close all;
 
 %%
-batch_mode = false;
+batch_mode = true;
 fps = 10;
 pin_duration_seconds = 600;
 
