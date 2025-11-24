@@ -115,7 +115,7 @@ semMperc = std(locoData.mperc)/ sqrt(numSessions);
 [~, p_mperc] = ttest(dom_mperc,   sub_mperc);
 
 %% ==== PLOTTING ====
-figure('Position', [100, 100, 950, 400]);
+figure('Position', [100, 100, 950, 600]);
 
 barX = [1, 2];
 jitter = 0.12;
@@ -178,7 +178,7 @@ text(1.5, yMax + 1, labelInter, 'HorizontalAlignment', 'center', 'FontSize', 12,
 sgtitle(sprintf('Group-Level Behavior Summary (n = %d sessions)', numSessions), 'FontSize', 12);
 
 %% ==== PLOT: LOCOMOTION STATS ====
-figure('Position', [200, 100, 1400, 400]);
+figure('Position', [200, 100, 1400, 600]);
 
 barX = [1, 2];
 jitter = 0.12;
@@ -249,7 +249,7 @@ add_sig_bracket(1, 2, y_data_top, p_mperc);
 sgtitle(sprintf('Locomotion Comparison (n = %d)', numSessions), 'FontSize', 12);
 
 %% ==== PLOT: PREFERENCE INDEX + CORRELATION ====
-figure('Position', [100, 550, 1200, 450]);
+figure('Position', [100, 550, 1200, 600]);
 
 % --- Subplot 1: PI Bar Plot ---
 subplot(1,2,1); hold on;
@@ -328,6 +328,46 @@ grid on; box on;
 legend([hDom, hSub, hFit], {'Dom', 'Sub', 'Fit'}, 'Location', 'best');
 
 sgtitle('Social Preference and Locomotion');
+
+%% ==== SAVE ALL FIGURES ====
+% Create figures directory inside the selected data folder
+figures_dir = fullfile(dataFolder, 'figures');
+if ~exist(figures_dir, 'dir')
+    mkdir(figures_dir);
+end
+
+% Get all open figure handles
+fig_handles = findobj('Type', 'figure');
+
+% Save each figure
+for fIdx = 1:length(fig_handles)
+    fig = fig_handles(fIdx);
+    
+    % Use figure Name, or fallback
+    fig_name = fig.Name;
+    if isempty(fig_name) || strcmp(fig_name, sprintf('Figure %d', fIdx))
+        fig_name = sprintf('figure_%d', fIdx);
+    end
+    
+    % Sanitize filename: remove \ / : * ? " < > | and spaces → underscores
+    fig_name = regexprep(fig_name, '[\\/:*?"<>|\s]', '_');
+    
+    % Full output path
+    png_path = fullfile(figures_dir, [fig_name, '.png']);
+    
+    % Save (R2019a: use print instead of exportgraphics if needed)
+    try
+        % R2020a+: exportgraphics is preferred
+        exportgraphics(fig, png_path, 'Resolution', 600);
+    catch
+        % Fallback for R2019a and earlier
+        print(fig, png_path, '-dpng', '-r600');
+    end
+    
+    fprintf('Saved: %s\n', png_path);
+end
+
+fprintf('\nAll figures saved to:\n%s\n', figures_dir);
 
 %% Helper function to convert p-value to significance label
 function label = pval2sig(p)
