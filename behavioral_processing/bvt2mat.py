@@ -30,7 +30,6 @@ class Bvt2Mat:
         self.sub = Bvt_Process(sub_filepath)
 
     def bvt_to_mat_workflow(self):
-
         dm_beh_array = self._blob_to_beh(self.dom.blob_array, True)
         sb_beh_array = self._blob_to_beh(self.sub.blob_array, False)
 
@@ -135,14 +134,14 @@ class Bvt_Process:
         else:
             raise RuntimeError("Blob array missing!")
 
-        if roi is None and blob_config["roi"] is None:
-            self.roi = self._get_canvas_dim_from_blob_array(blob_array)
-            x1, y1, x2, y2 = self.roi
-            self.canvas_dim = (abs(y2-y1), abs(x2-x1))
-        else:
-            self.roi = blob_config["roi"] if roi is None else roi
-            x1, y1, x2, y2 = self.roi
-            self.canvas_dim = (abs(y2-y1), abs(x2-x1))
+        if roi is None or (isinstance(roi, np.ndarray) and roi.ndim == 0 and roi.item() is None):
+            roi = blob_config["roi"]
+            if roi is None:
+                roi = self._get_canvas_dim_from_blob_array(blob_array)
+
+        self.roi = roi
+        x1, y1, x2, y2 = self.roi
+        self.canvas_dim = (abs(y2-y1), abs(x2-x1))
 
         self._get_bg(blob_config)
 
@@ -151,10 +150,11 @@ class Bvt_Process:
         self._get_locomotion()
 
     def _get_canvas_dim_from_blob_array(self, blob_array, buffer=20):
-        min_x = np.min(blob_array[:, 2]) - buffer
-        min_y = np.min(blob_array[:, 3]) - buffer
-        max_x = np.max(blob_array[:, 4]) + buffer
-        max_y = np.max(blob_array[:, 5]) + buffer
+        blob_array_filtered = blob_array[blob_array[:,0] == 1]
+        min_x = np.min(blob_array_filtered[:, 2]) - buffer
+        min_y = np.min(blob_array_filtered[:, 3]) - buffer
+        max_x = np.max(blob_array_filtered[:, 4]) + buffer
+        max_y = np.max(blob_array_filtered[:, 5]) + buffer
         
         return min_x, min_y, max_x, max_y
     
@@ -194,12 +194,17 @@ class Bvt_Process:
             heatmap = heatmap.astype(np.uint8)
 
         if self.bg_frame is not None:
-            overlay = cv2.addWeighted(self.bg_frame, 0.6, cv2.applyColorMap(heatmap, cv2.COLORMAP_JET), 0.4, 0)
+            try:
+                overlay = cv2.addWeighted(self.bg_frame, 0.6, cv2.applyColorMap(heatmap, cv2.COLORMAP_JET), 0.4, 0)
+            except:
+                print(self.bg_frame.shape, heatmap.shape)
+                return
 
         x1, y1, x2, y2 = self.roi
         if (y2 - y1) > (x2 - x1):
             heatmap = cv2.rotate(heatmap, cv2.ROTATE_90_CLOCKWISE)
             overlay = cv2.rotate(overlay, cv2.ROTATE_90_CLOCKWISE)
+            self.bg_frame = cv2.rotate(self.bg_frame, cv2.ROTATE_90_CLOCKWISE)
 
         self.heatmap = heatmap
         self.overlay = overlay

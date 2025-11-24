@@ -114,6 +114,7 @@ hold off;
 %% === 2. Behavior Duration & Subtype Analysis ===
 count_beh = @(beh_str) sum(contains(annot_named, string(beh_str)));
 
+total = length(annot_named);
 dom_int  = count_beh('dom_interaction');
 dom_icg  = count_beh('dom_in_cage');
 sub_init = count_beh('sub_interaction');
@@ -125,11 +126,14 @@ figure('Name', 'Behavior Distribution with Contact Type');
 colormap(color_map_active);
 set(gcf, 'Color', 'white');
 
-role_labels = {'Interact With Dom', ...
-               'In Dom Cage', ...
-               'Interact With Sub', ...
-               'In Sub Cage', ...
-               'In Neither Cage'};
+
+role_labels = {
+    sprintf('Interact With Dom (%.1f%%)', dom_int/total*100), ...
+    sprintf('In Dom Cage (%.1f%%)',      dom_icg/total*100), ...
+    sprintf('Interact With Sub (%.1f%%)', sub_init/total*100), ...
+    sprintf('In Sub Cage (%.1f%%)',      sub_icg/total*100), ...
+    sprintf('In Neither Cage (%.1f%%)',  other/total*100)
+};
 
 counts = [dom_int, dom_icg, sub_init, sub_icg, other];
 pie(counts, role_labels);
