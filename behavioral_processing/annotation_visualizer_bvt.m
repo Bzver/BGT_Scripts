@@ -31,8 +31,10 @@ sub_loco = S.locomotion.sub_loco;
 dom_td = S.locomotion.dom_td;
 sub_td = S.locomotion.sub_td;
 
-dom_heatmap = S.heatmap.dom;
-sub_heatmap = S.heatmap.sub;
+dom_bg = S.heatmap.dom_bg;
+sub_bg = S.heatmap.sub_bg;
+dom_heatmap = S.heatmap.dom_h;
+sub_heatmap = S.heatmap.sub_h;
 
 %% Color ref
 color_map_active = [
@@ -46,22 +48,26 @@ color_map_active = [
 %% === 1. Heatmaps with Shared Color Scale ===
 dom_hm = im2double(dom_heatmap);
 sub_hm = im2double(sub_heatmap);
-global_max = max([dom_hm(:); sub_hm(:)]);
-if global_max == 0, global_max = 1; end
 
 figure('Name', 'Heatmap & Locomotion Summary', 'Position', [100, 100, 1400, 600]);
 
 subplot(2,2,1);
-imagesc(dom_hm); axis image; colormap(jet); 
-clim([0, global_max]);
+imshow(dom_bg);
+hold on;
+h = imagesc(dom_hm); axis image; colormap(jet); 
+h.AlphaData = 0.5;
 title('Dominant');
 xlabel('Arena X'); ylabel('Arena Y');
+hold off;
 
 subplot(2,2,2);
-imagesc(sub_hm); axis image; colormap(jet);
-clim([0, global_max]);
+imshow(sub_bg);
+hold on;
+h = imagesc(sub_hm); axis image; colormap(jet);
+h.AlphaData = 0.5;
 title('Subordinate');
 xlabel('Arena X'); ylabel('Arena Y');
+hold off;
 colorbar;
 
 subplot(2,2,3);

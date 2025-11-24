@@ -10,20 +10,6 @@ from tkinter import filedialog
 root = tk.Tk()
 root.withdraw()
 
-class Generic_Object:
-    def __init__(self, *args, **kwargs):
-        pass
-    def __call__(self, *args, **kwargs):
-        return self
-    def __getattr__(self, item):
-        return self
-
-class Safe_Unpickler(pickle.Unpickler):
-    def find_class(self, module, name):
-        try:
-            return super().find_class(module, name)
-        except (AttributeError, ModuleNotFoundError, KeyError):
-            return Generic_Object
 
 class Bvt2Mat:
     def __init__(self, dom_filepath: str, sub_filepath: str, min_count: int = 1, max_count: int = 2):
@@ -95,8 +81,10 @@ class Bvt2Mat:
                 "behaviors": self.behavior_dict,
             }
             heatmap_struct = {
-                "dom": self.dom.heatmap,
-                "sub": self.sub.heatmap,
+                "dom_bg": self.dom.bg_frame,
+                "sub_bg": self.sub.bg_frame,
+                "dom_h": self.dom.heatmap,
+                "sub_h": self.sub.heatmap,
             }
             locomotion_struct = {
                 "dom_td": self.dom.total_distance,
@@ -111,6 +99,14 @@ class Bvt2Mat:
                 }
             sio.savemat(mat_filepath, mat_to_save)
             print(f"Successfully saved to {mat_filepath}")
+
+            if self.dom.overlay is not None:
+                dom_overlay_path = mat_filepath.replace('.mat', '_dom_overlay.png')
+                cv2.imwrite(dom_overlay_path, self.dom.overlay)
+            if self.sub.overlay is not None:
+                sub_overlay_path = mat_filepath.replace('.mat', '_sub_overlay.png')
+                cv2.imwrite(sub_overlay_path, self.sub.overlay)
+
         except Exception as e:
             print(f"Failed to save {mat_filepath}, Exception: {e}")
 
@@ -124,14 +120,15 @@ class Bvt_Process:
         self.heatmap = None
         self.locomotion = None 
         self.total_distance = 0.0
-        self.mobile_percentage = 0.0
+        self.overlay = None
 
         with open(self.fp, 'rb') as f:
-            bvtf = Safe_Unpickler(f).load()
+            bvtf = pickle.load(f)
 
         blob_array = bvtf.get('blob_array')
         blob_config = bvtf.get('blob_config')
         roi = bvtf.get('roi')
+        self.bg_frame = None
 
         if blob_array is not None and np.sum(blob_array) != 0:
             self.blob_array = blob_array
@@ -147,6 +144,8 @@ class Bvt_Process:
             x1, y1, x2, y2 = self.roi
             self.canvas_dim = (abs(y2-y1), abs(x2-x1))
 
+        self._get_bg(blob_config)
+
         self._get_centroid()
         self._get_heatmap()
         self._get_locomotion()
@@ -159,6 +158,18 @@ class Bvt_Process:
         
         return min_x, min_y, max_x, max_y
     
+    def _get_bg(self, blob_config):
+        bg_frames = blob_config.get("background_frames")
+        bg_removal_method = blob_config.get("bg_removal_method")
+        if not bg_removal_method or not bg_frames:
+            return
+        raw_bg = bg_frames.get(bg_removal_method)
+        if raw_bg is None:
+            return
+        
+        x1, y1, x2, y2 = self.roi
+        self.bg_frame = raw_bg[y1:y2, x1:x2]
+
     def _get_centroid(self):
         self.centroids = np.full((self.blob_array.shape[0], 2), -1)
         single_animal_mask = self.blob_array[:, 0] == 1
@@ -175,14 +186,23 @@ class Bvt_Process:
         ys = np.clip(centroids_trimmed[:, 1].astype(int), 0, height - 1)
 
         np.add.at(heatmap, (ys, xs), 1)
-        heatmap = cv2.GaussianBlur(heatmap, (21, 21), sigmaX=10, sigmaY=10)
+        heatmap = cv2.GaussianBlur(heatmap, (0, 0), sigmaX=25, sigmaY=25)
 
         if heatmap.max() > 0:
             heatmap = (255 * (heatmap - heatmap.min()) / (heatmap.max() - heatmap.min())).astype(np.uint8)
         else:
             heatmap = heatmap.astype(np.uint8)
 
+        if self.bg_frame is not None:
+            overlay = cv2.addWeighted(self.bg_frame, 0.6, cv2.applyColorMap(heatmap, cv2.COLORMAP_JET), 0.4, 0)
+
+        x1, y1, x2, y2 = self.roi
+        if (y2 - y1) > (x2 - x1):
+            heatmap = cv2.rotate(heatmap, cv2.ROTATE_90_CLOCKWISE)
+            overlay = cv2.rotate(overlay, cv2.ROTATE_90_CLOCKWISE)
+
         self.heatmap = heatmap
+        self.overlay = overlay
 
     def _get_locomotion(self):
         self.locomotion = np.full((self.blob_array.shape[0],), -1)
@@ -224,13 +244,13 @@ if __name__ == "__main__":
         print("No dominant file selected. Exiting.")
         exit()
 
-    print("Please select the SUBMISSIVE animal workspace file (.pkl)")
+    print("Please select the SUBORDINATE animal workspace file (.pkl)")
     sub_pkl = filedialog.askopenfilename(
-        title="Select Submissive Animal Workspace (.pkl)",
+        title="Select Subordinate Animal Workspace (.pkl)",
         filetypes=[("Pickle files", "*.pkl")]
     )
     if not sub_pkl:
-        print("No submissive file selected. Exiting.")
+        print("No subordinate file selected. Exiting.")
         exit()
 
     b2m = Bvt2Mat(dom_filepath=dom_pkl, sub_filepath=sub_pkl)
