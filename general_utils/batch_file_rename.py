@@ -67,12 +67,12 @@ def verify_file_id(filepath):
             )
 
 def determine_exp_day(filepath, start_date):
-    if str(int(start_date) + 2) in filepath:
+    if f"\\{(int(start_date) + 2)}\\" in filepath:
         return "Day3"
-    elif str(int(start_date) + 1) in filepath:
+    elif f"\\{(int(start_date) + 1)}\\" in filepath:
         return "Day2"
-    elif str(int(start_date)) in filepath:
+    elif f"\\{(int(start_date))}\\" in filepath:
         return "Day1"
     
 if __name__ == "__main__":
-    find_and_rename_mat("D:/Data/Videos", dry_run=False)
+    find_and_rename_mat("D:/DGH/Data/Videos/20251201 Marathon", dry_run=False)

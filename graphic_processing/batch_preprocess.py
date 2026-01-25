@@ -162,10 +162,10 @@ class App:
         master.geometry("500x350")
 
         self.input_folder = tk.StringVar()
-        self.target_width = tk.IntVar(value=640)
-        self.target_height = tk.IntVar(value=480)
+        self.target_width = tk.IntVar(value=1536)
+        self.target_height = tk.IntVar(value=1024)
         self.output_suffix = tk.StringVar(value="-proc.mp4")
-        self.fps = tk.DoubleVar(value=20.0)
+        self.fps = tk.DoubleVar(value=10.0)
         self.recursive_search = tk.BooleanVar(value=True)
         self.use_original_dims = tk.BooleanVar(value=False)
 
