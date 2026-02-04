@@ -53,6 +53,11 @@ def aa2m_workflow(root_path:str, asoid_dir:str):
 
         new_sub = sub_array.copy()
         new_sub[new_sub!=0] += max_idx
+
+        new_len = min(len(combined_array), len(new_sub))
+        combined_array = combined_array[0:new_len]
+        new_sub = new_sub[0:new_len]
+
         combined_array[combined_array==0] = new_sub[combined_array==0]
 
         for key, idx in sub_behav.items():
