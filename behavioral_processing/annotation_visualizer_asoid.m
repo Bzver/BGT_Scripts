@@ -128,13 +128,11 @@ function processSingleMatFile(annot_mat, fps, pin_duration_seconds, batch_mode)
     
     %% Color ref
     color_map_active = [
-        S.color.dom_allogrooming;
         S.color.dom_anogenital;
         S.color.dom_huddling;
         S.color.dom_mounting;
         S.color.dom_passive;
         S.color.dom_sniffing;
-        S.color.sub_allogrooming;
         S.color.sub_anogenital;
         S.color.sub_huddling;
         S.color.sub_mounting;
@@ -148,13 +146,11 @@ function processSingleMatFile(annot_mat, fps, pin_duration_seconds, batch_mode)
     count_beh = @(beh_str) sum(contains(annot_named, string(beh_str)));
     
     total = length(annot_named);
-    dom_allo  = count_beh('dom_allogrooming');
     dom_genita  = count_beh('dom_anogenital');
     dom_hug = count_beh('dom_huddling');
     dom_mount = count_beh('dom_mounting');
     dom_pass = count_beh('dom_passive');
     dom_sniff = count_beh('dom_sniffing');
-    sub_allo  = count_beh('sub_allogrooming');
     sub_genita  = count_beh('sub_anogenital');
     sub_hug = count_beh('sub_huddling');
     sub_mount = count_beh('sub_mounting');
@@ -163,13 +159,11 @@ function processSingleMatFile(annot_mat, fps, pin_duration_seconds, batch_mode)
     other = count_beh('other');
 
     behavior_labels_full = {
-        sprintf('dom_allogrooming (%.1f%%)', 100*dom_allo/total);
         sprintf('dom_anogenital (%.1f%%)',   100*dom_genita/total);
         sprintf('dom_huddling (%.1f%%)',     100*dom_hug/total);
         sprintf('dom_mounting (%.1f%%)',     100*dom_mount/total);
         sprintf('dom_passive (%.1f%%)',      100*dom_pass/total);
         sprintf('dom_sniffing (%.1f%%)',     100*dom_sniff/total);
-        sprintf('sub_allogrooming (%.1f%%)', 100*sub_allo/total);
         sprintf('sub_anogenital (%.1f%%)',   100*sub_genita/total);
         sprintf('sub_huddling (%.1f%%)',     100*sub_hug/total);
         sprintf('sub_mounting (%.1f%%)',     100*sub_mount/total);
@@ -178,8 +172,8 @@ function processSingleMatFile(annot_mat, fps, pin_duration_seconds, batch_mode)
         sprintf('other (%.1f%%)',            100*other/total)
     };
 
-    counts_full = [dom_allo, dom_genita, dom_hug, dom_mount, dom_pass, dom_sniff, ...
-                   sub_allo, sub_genita, sub_hug, sub_mount, sub_pass, sub_sniff, other];
+    counts_full = [dom_genita, dom_hug, dom_mount, dom_pass, dom_sniff, ...
+                   sub_genita, sub_hug, sub_mount, sub_pass, sub_sniff, other];
 
 %% === Dual Raster Plot: Dom vs Sub ===
 
@@ -293,13 +287,11 @@ other_count = sum(annot == 0);
 
 % --- Colors ---
 color_full = [
-    S.color.dom_allogrooming;
     S.color.dom_anogenital;
     S.color.dom_huddling;
     S.color.dom_mounting;
     S.color.dom_passive;
     S.color.dom_sniffing;
-    S.color.sub_allogrooming;
     S.color.sub_anogenital;
     S.color.sub_huddling;
     S.color.sub_mounting;
@@ -312,17 +304,17 @@ color_full = [
 figure('Name', 'Behavior Pie Charts', 'Position', [200, 200, 1200, 450]);
 
 % Pie 1: All behaviors
-counts_full = [dom_allo, dom_genita, dom_hug, dom_mount, dom_pass, dom_sniff, ...
-               sub_allo, sub_genita, sub_hug, sub_mount, sub_pass, sub_sniff, other_count];
-labels_full = {'dom_allogrooming','dom_anogenital','dom_huddling','dom_mounting','dom_passive','dom_sniffing',...
-               'sub_allogrooming','sub_anogenital','sub_huddling','sub_mounting','sub_passive','sub_sniffing','other'};
+counts_full = [dom_genita, dom_hug, dom_mount, dom_pass, dom_sniff, ...
+               sub_genita, sub_hug, sub_mount, sub_pass, sub_sniff, other_count];
+labels_full = {'dom_anogenital','dom_huddling','dom_mounting','dom_passive','dom_sniffing',...
+               'sub_anogenital','sub_huddling','sub_mounting','sub_passive','sub_sniffing','other'};
 safe_pie(counts_full, labels_full, color_full, 'All Behaviors');
 
 
 %% === Grouped Bar Plot: Dom vs Sub (True Per-Behavior Colors) ===
 
 % Define behavior types (shared between dom/sub)
-behavior_types = {'allogrooming', 'anogenital', 'huddling', 'mounting', 'passive', 'sniffing'};
+behavior_types = {'anogenital', 'huddling', 'mounting', 'passive', 'sniffing'};
 
 % Preallocate counts and colors
 n_beh = length(behavior_types);
@@ -392,7 +384,7 @@ else
     time_minutes = (0.5:num_bins-0.5) * (pin_duration_frames / fps / 60);
     
     % Behavior types (same as bar plot)
-    behavior_types = {'allogrooming', 'anogenital', 'huddling', 'mounting', 'passive', 'sniffing'};
+    behavior_types = {'anogenital', 'huddling', 'mounting', 'passive', 'sniffing'};
     n_beh = length(behavior_types);
     
     % --- Prepare data matrices ---
@@ -441,7 +433,6 @@ else
     
     % Get colors (only 6 behaviors, no "other")
     dom_colors = [
-        S.color.dom_allogrooming;
         S.color.dom_anogenital;
         S.color.dom_huddling;
         S.color.dom_mounting;
@@ -449,7 +440,6 @@ else
         S.color.dom_sniffing
     ];
     sub_colors = [
-        S.color.sub_allogrooming;
         S.color.sub_anogenital;
         S.color.sub_huddling;
         S.color.sub_mounting;

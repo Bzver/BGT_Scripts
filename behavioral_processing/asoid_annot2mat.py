@@ -15,22 +15,27 @@ def aa2m_workflow(root_path:str, asoid_dir:str):
     fpd = find_bvt_export_meta(root_path)
     for id in fpd.keys():
         idd = fpd[id]
+        print(f"\n--- Processing ID: {id} ---")
+
         if idd["dom"] is None or idd["sub"] is None:
             continue
         dom_meta_path = idd["dom"]
         dom_asoid_pred = find_corresponding_asoid_pred(dom_meta_path, asoid_dir)
         if not dom_asoid_pred:
+            print(f"No ASOID prediction found for DOM → skipping {id}")
             continue
 
         sub_meta_path = idd["sub"]
         sub_asoid_pred = find_corresponding_asoid_pred(sub_meta_path, asoid_dir)
         if not sub_asoid_pred:
+            print(f"No ASOID prediction found for SUB → skipping {id}")
             continue
 
         dom_array, dom_behav, dom_color = remap_trunc_df(dom_meta_path, dom_asoid_pred)
         sub_array, sub_behav, sub_color = remap_trunc_df(sub_meta_path, sub_asoid_pred)
 
         if dom_behav != sub_behav:
+            print(f"Behavior mappings differ between DOM and SUB → skipping {id}")
             continue
 
         combined_behav = {}
