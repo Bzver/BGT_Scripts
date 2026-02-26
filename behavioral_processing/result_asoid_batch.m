@@ -4,7 +4,7 @@ close all;
 %%
 fps = 10;
 pin_duration_seconds = 600;
-min_frames = 100;
+min_frames = 10;
 
 root_dir = uigetdir('', 'Select Root Folder to Search for .mat Files');
 if root_dir == 0
@@ -51,7 +51,7 @@ fid = fopen(log_file, 'w');
 fclose(fid);
 
 % Define behavior types
-behavior_types = {'anogenital', 'huddling', 'mounting', 'passive', 'sniffing'};
+behavior_types = {'anogenital', 'huddling', 'mounting', 'passive', 'sniffing', 'intromission'};
 n_beh = length(behavior_types);
 
 % Store individual file metrics
@@ -97,7 +97,8 @@ for i = 1:n_files
                 S.color.dom_huddling;
                 S.color.dom_mounting;
                 S.color.dom_passive;
-                S.color.dom_sniffing
+                S.color.dom_sniffing;
+                S.color.dom_intromission
             ];
             colors_initialized = true;
         end
@@ -257,7 +258,7 @@ function add_sig_bracket(x1, x2, y_base, pval, varargin)
     end
 end
 
-%% ==== Supporting Functions (unchanged) ====
+%% ==== Supporting Functions ====
 function files = getAllMatFiles(root)
     files = {};
     dirs = dir(fullfile(root, '**', '*.mat'));

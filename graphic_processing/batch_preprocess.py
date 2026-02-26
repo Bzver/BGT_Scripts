@@ -33,6 +33,11 @@ def preprocess_videos(input_folder, target_width, target_height, fps, output_suf
                 if f.lower().endswith(('.mp4', '.avi', '.mov', '.mkv')):
                     if output_suffix in f:
                         continue
+                    f_name, f_ext = os.path.splitext(f)
+                    if os.path.isfile(os.path.join(root, f"{f_name}{output_suffix}{f_ext}")):
+                        continue
+                    if "temp_extract" in f:
+                        continue
                     video_files_to_process.append(os.path.join(root, f))
     else:
         try:
