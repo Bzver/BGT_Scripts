@@ -1,15 +1,11 @@
 import os
+from scipy.io import loadmat, savemat
 import keypoint_moseq as kpms
 
-import numpy as np
-from scipy.io import loadmat, savemat
-
-MODE = "dannce"   # "dannce" or "sleap"
-PROJECT_DIR = "/mnt/d/Project/Keypoint-Moseq/20250913"
+PROJECT_DIR = "/mnt/d/Project/KPMS-Models/20260125"
 VIDEO_DIR = ""
 KEYPOINT_DATA = "/mnt/d/Project/SDANNCE-Models/"  # can be a file, a directory, or a list of files
 
-# SDANNCE Config
 SELECTION = "SD-"
 BP = [  # KPMS's native dannce config suppot is obsolete for SDANNCE, had to do it all manually
     "EarL", "EarR", "Snout", "SpineF", "SpineM",
@@ -38,9 +34,6 @@ SKELETON = [
 ANTERIOR_BP = ["Snout"]
 POSTERIOR_BP = ["Tail(base)"]
 USED_BP = [bp for bp in BP if bp not in ("Tail(mid)","Tail(end)")]
-
-# SLEAP Config
-SLEAP_FILE = "/mnt/d/Project/deepof/Tables/20250117-OFT-test1-toe1-con-conv.analysis.h5"  # any .slp or .h5 file with predictions for a single video
 
 def split_path(path):
     parts = []
@@ -93,18 +86,14 @@ def preprocess_sdannce(filepath_pattern, project_prefix=None):
 
 os.makedirs(PROJECT_DIR, exist_ok=True)
 
-if MODE == "sleap":    # Sleap setup
-    kpms.setup_project(project_dir=PROJECT_DIR, sleap_file=SLEAP_FILE)
-
-elif MODE == "dannce":    # Setup (for 3D SDANNCE)
-    KEYPOINT_DATA = preprocess_sdannce(KEYPOINT_DATA, SELECTION)
-        
-    kpms.setup_project(
-        project_dir=PROJECT_DIR,
-        video_dir=VIDEO_DIR,
-        bodyparts=BP,
-        skeleton=SKELETON,
-        overwrite=True)
+KEYPOINT_DATA = preprocess_sdannce(KEYPOINT_DATA, SELECTION)
+    
+kpms.setup_project(
+    project_dir=PROJECT_DIR,
+    video_dir=VIDEO_DIR,
+    bodyparts=BP,
+    skeleton=SKELETON,
+    overwrite=True)
 
 kpms.update_config(
     project_dir=PROJECT_DIR,
@@ -114,10 +103,9 @@ kpms.update_config(
     use_bodyparts=USED_BP,
 )
 
-coordinates, confidences, bodyparts = kpms.load_keypoints(filepath_pattern=KEYPOINT_DATA, format=MODE)
+coordinates, confidences, bodyparts = kpms.load_keypoints(filepath_pattern=KEYPOINT_DATA, format="dannce")
 config = lambda: kpms.load_config(project_dir=PROJECT_DIR)
 
-# format data for modeling
 data, metadata = kpms.format_data(coordinates, confidences, **config())
 
 if os.path.isfile(os.path.join(PROJECT_DIR, "pca.p")):  # Load existing PCA if there is one
