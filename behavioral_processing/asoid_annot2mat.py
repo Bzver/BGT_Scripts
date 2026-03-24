@@ -31,56 +31,7 @@ def aa2m_workflow(root_path:str, asoid_dir:str):
             print(f"No ASOID prediction found for SUB → skipping {id}")
             continue
 
-        dom_array, dom_behav, dom_color, dom_ins, dom_int = remap_trunc_df(dom_meta_path, dom_asoid_pred)
-        sub_array, sub_behav, sub_color, sub_ins, sub_int = remap_trunc_df(sub_meta_path, sub_asoid_pred)
-
-        if dom_behav != sub_behav:
-            print(f"Behavior mappings differ between DOM and SUB → skipping {id}")
-            continue
-
-        combined_behav = {}
-        combined_color = {}
-        combined_stat = {
-            "neither": 1 - dom_ins - sub_ins,
-            "ins_dom": dom_ins,
-            "ins_sub": sub_ins,
-            "int_dom": dom_int,
-            "int_sub": sub_int
-        }
-        combined_array = dom_array.copy()
-
-        combined_behav["other"] = 0
-        combined_color["other"] = dom_color.get("color", (0.65, 0.65, 0.65))
-
-        max_idx = 0
-
-        for key, idx in dom_behav.items():
-            if key == "other":
-                continue
-
-            combined_behav[f"dom_{key}"] = idx
-            combined_color[f"dom_{key}"] = lighten_rgb_triplet(dom_color[key])
-
-            max_idx = max(max_idx, idx)
-
-        new_sub = sub_array.copy()
-        new_sub[new_sub!=0] += max_idx
-
-        new_len = min(len(combined_array), len(new_sub))
-        combined_array = combined_array[0:new_len]
-        new_sub = new_sub[0:new_len]
-
-        combined_array[combined_array==0] = new_sub[combined_array==0]
-
-        for key, idx in sub_behav.items():
-            if key == "other":
-                continue
-
-            combined_behav[f"sub_{key}"] = idx + max_idx
-            combined_color[f"sub_{key}"] = darken_rgb_triplet(sub_color[key])
-
-        mat_path = os.path.join(os.path.dirname(idd["dom"]), f"{id}.mat")
-        save_to_mat(mat_path, combined_array, combined_behav, combined_color, combined_stat)
+        shared_workflow(idd, id, dom_meta_path, dom_asoid_pred, sub_meta_path, sub_asoid_pred)
 
 def onehot_to_mat_workflow(root_path:str):
     fpd = find_bvt_export_meta(root_path)
@@ -103,56 +54,80 @@ def onehot_to_mat_workflow(root_path:str):
             print(f"No onehot found for SUB → skipping {id}")
             continue
 
-        dom_array, dom_behav, dom_color, dom_ins, dom_int = remap_trunc_df(dom_meta_path, dom_asoid_pred, True)
-        sub_array, sub_behav, sub_color, sub_ins, sub_int = remap_trunc_df(sub_meta_path, sub_asoid_pred, True)
+        shared_workflow(idd, id, dom_meta_path, dom_asoid_pred, sub_meta_path, sub_asoid_pred)
 
-        if dom_behav != sub_behav:
-            print(f"Behavior mappings differ between DOM and SUB → skipping {id}")
+def shared_workflow(idd, id, dom_meta_path, dom_asoid_pred, sub_meta_path, sub_asoid_pred):
+    dom_array, dom_behav, dom_color, dom_sum = remap_trunc_df(dom_meta_path, dom_asoid_pred)
+    sub_array, sub_behav, sub_color, sub_sum = remap_trunc_df(sub_meta_path, sub_asoid_pred)
+
+    if dom_behav != sub_behav:
+        print(f"Behavior mappings differ between DOM and SUB → skipping {id}")
+        return
+
+    sub_sum[sub_sum != 0] += 2
+    min_len = min(len(dom_sum), len(sub_sum))
+    sub_sum = sub_sum[:min_len]
+    dom_sum = dom_sum[:min_len]
+    sum_array = sub_sum
+    sum_array[sub_sum == 0] = dom_sum[sub_sum == 0]
+
+    sum_behav = {
+        "neither": 0,
+        "dom_cage": 1,
+        "dom_interact": 2,
+        "sub_cage": 3,
+        "sub_interact": 4
+    }
+    sum_color = {
+        "neither": (0.65, 0.65, 0.65),
+        "dom_cage": (0.46, 0.61, 0.92),
+        "dom_interact": (0.26, 0.48, 0.94),
+        "sub_cage": (0.92, 0.47, 0.46),
+        "sub_interact": (0.91, 0.22, 0.22),
+    }
+
+    combined_behav = {}
+    combined_color = {}
+    combined_sum = {
+        "sum": sum_array,
+        "behav": sum_behav,
+        'sum_color': sum_color
+
+    }
+    combined_array = dom_array.copy()
+
+    combined_behav["other"] = 0
+    combined_color["other"] = dom_color.get("color", (0.65, 0.65, 0.65))
+
+    max_idx = 0
+
+    for key, idx in dom_behav.items():
+        if key == "other":
             continue
 
-        combined_behav = {}
-        combined_color = {}
-        combined_stat = {
-            "neither": 1 - dom_ins - sub_ins,
-            "ins_dom": dom_ins,
-            "ins_sub": sub_ins,
-            "int_dom": dom_int,
-            "int_sub": sub_int
-        }
-        combined_array = dom_array.copy()
+        combined_behav[f"dom_{key}"] = idx
+        combined_color[f"dom_{key}"] = lighten_rgb_triplet(dom_color[key])
 
-        combined_behav["other"] = 0
-        combined_color["other"] = dom_color.get("color", (0.65, 0.65, 0.65))
+        max_idx = max(max_idx, idx)
 
-        max_idx = 0
+    new_sub = sub_array.copy()
+    new_sub[new_sub!=0] += max_idx
 
-        for key, idx in dom_behav.items():
-            if key == "other":
-                continue
+    new_len = min(len(combined_array), len(new_sub))
+    combined_array = combined_array[0:new_len]
+    new_sub = new_sub[0:new_len]
 
-            combined_behav[f"dom_{key}"] = idx
-            combined_color[f"dom_{key}"] = lighten_rgb_triplet(dom_color[key])
+    combined_array[combined_array==0] = new_sub[combined_array==0]
 
-            max_idx = max(max_idx, idx)
+    for key, idx in sub_behav.items():
+        if key == "other":
+            continue
 
-        new_sub = sub_array.copy()
-        new_sub[new_sub!=0] += max_idx
+        combined_behav[f"sub_{key}"] = idx + max_idx
+        combined_color[f"sub_{key}"] = darken_rgb_triplet(sub_color[key])
 
-        new_len = min(len(combined_array), len(new_sub))
-        combined_array = combined_array[0:new_len]
-        new_sub = new_sub[0:new_len]
-
-        combined_array[combined_array==0] = new_sub[combined_array==0]
-
-        for key, idx in sub_behav.items():
-            if key == "other":
-                continue
-
-            combined_behav[f"sub_{key}"] = idx + max_idx
-            combined_color[f"sub_{key}"] = darken_rgb_triplet(sub_color[key])
-
-        mat_path = os.path.join(os.path.dirname(idd["dom"]), f"{id}.mat")
-        save_to_mat(mat_path, combined_array, combined_behav, combined_color, combined_stat)
+    mat_path = os.path.join(os.path.dirname(idd["dom"]), f"{id}.mat")
+    save_to_mat(mat_path, combined_array, combined_behav, combined_color, combined_sum)
 
 def save_to_mat(mat_path, behav_array, behav_dict, color_dict, stat_dict):
     try:
@@ -219,9 +194,8 @@ def find_bvt_export_meta(root_path:str) -> Dict[str, Dict[str, str]]:
 
 def remap_trunc_df(
         json_path:str,
-        csv_path:str,
-        skip_remapping:bool=False
-        ) -> Tuple[np.ndarray, Dict[str, int], Dict[str, str]]:
+        csv_path:str
+        ) -> Tuple[np.ndarray, Dict[str, int], Dict[str, str], np.ndarray]:
     
     with open(json_path) as f:
         meta = json.load(f)
@@ -232,7 +206,9 @@ def remap_trunc_df(
     used_frames = meta["used_frames"]
     behav_map = meta["behav_map"]
 
-    used_perc = len(used_frames) / total_frames
+    sum_array = np.zeros(total_frames, dtype=int)
+    sum_array[used_frames] = 1
+
     used_frames = np.array(used_frames, dtype=int)
     behav_dict = {}
     color_dict = {}
@@ -251,7 +227,7 @@ def remap_trunc_df(
     behav_dict["other"] = 0
     color_dict["other"] = hex_to_rgb_triplet(other_color)
 
-    behav_array = np.zeros((total_frames,))
+    behav_array = np.zeros(total_frames, dtype=int)
     
     for i, behav in enumerate(behav_cols):
         behav_dict[behav] = i + 1
@@ -261,24 +237,22 @@ def remap_trunc_df(
         active_series = df[behav]
         active_mask = (active_series.values == 1)
 
-        if skip_remapping:
+        try:
             behav_array[active_mask] = i + 1
-            continue
+        except IndexError:
+            active_original_frames = used_frames[active_mask].tolist()
+            behav_array[active_original_frames] = i + 1
+            next_i = i + 2
 
-        active_mask = np.concatenate([[False], active_mask])
-        active_original_frames = used_frames[active_mask].tolist()
-        behav_array[active_original_frames] = i + 1
-        next_i = i + 2
+    sum_array[behav_array != 0] += 1
 
     if extra_behav:
         for j, behav in enumerate(extra_behav):
             behav_dict[behav] = next_i + j
             _, color = behav_map[behav]
             color_dict[behav] = hex_to_rgb_triplet(color)
-
-    activ_perc = 1 - np.sum(behav_array==0)/total_frames
     
-    return behav_array, behav_dict, color_dict, used_perc, activ_perc
+    return behav_array, behav_dict, color_dict, sum_array
 
 def hex_to_rgb_triplet(hex_color:str) -> Tuple[float, float, float]:
     return tuple(int(hex_color[i : i + 2], 16)/255 for i in (1, 3, 5))
