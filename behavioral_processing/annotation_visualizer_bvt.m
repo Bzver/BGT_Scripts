@@ -94,21 +94,6 @@ function processSingleMatFile(annot_mat, fps, pin_duration_seconds, batch_mode)
     annot_named = behavior_names(idx);
     num_frames_total = length(annot_named);
     
-    dom_avg_sp = S.locomotion.dom_avg;
-    sub_avg_sp = S.locomotion.sub_avg;
-    dom_avgm_sp = S.locomotion.dom_avgm;
-    sub_avgm_sp = S.locomotion.sub_avgm;
-    dom_mov_perc = S.locomotion.dom_mperc;
-    sub_mov_perc = S.locomotion.sub_mperc;
-    
-    dom_bg = S.heatmap.dom_bg;
-    sub_bg = S.heatmap.sub_bg;
-    dom_heatmap = S.heatmap.dom_h;
-    sub_heatmap = S.heatmap.sub_h;
-    
-    dom_bg = dom_bg * (1 - 0.9) + repmat(rgb2gray(dom_bg), [1, 1, 3]) * 0.9;
-    sub_bg = sub_bg * (1 - 0.9) + repmat(rgb2gray(sub_bg), [1, 1, 3]) * 0.9;
-    
     %% Color ref
     color_map_active = [
         0.1    0.2    0.5;    % dom_int
@@ -117,89 +102,7 @@ function processSingleMatFile(annot_mat, fps, pin_duration_seconds, batch_mode)
         0.95   0.55   0.55;   % sub_icg
         0.7    0.7    0.7;    % other
     ];
-    
-    %% === 0. Heatmaps ===
-    dom_hm = im2double(dom_heatmap);
-    sub_hm = im2double(sub_heatmap);
-    [bg_h, bg_w, ~] = size(dom_bg);
-    
-    dom_hm = imresize(dom_hm, [bg_h, bg_w], 'bilinear');
-    sub_hm = imresize(sub_hm, [bg_h, bg_w], 'bilinear');
-    dom_hm = max(0, min(1, dom_hm));
-    sub_hm = max(0, min(1, sub_hm));
-    
-    figure('Name', 'Heatmap', 'Position', [100, 100, 1100, 450]); % wider for colorbar
-    
-    subplot(1,2,1);
-    imshow(dom_bg, 'Border', 'tight');
-    hold on;
-    h1 = imagesc(1:bg_w, 1:bg_h, dom_hm);
-    colormap(jet);
-    h1.AlphaData = 0.5;
-    title('Dominant');
-    axis equal tight;
-    xlim([1, bg_w]);
-    ylim([1, bg_h]);
-    set(gca, 'YDir', 'normal');
-    hold off;
-    
-    subplot(1,2,2);
-    imshow(sub_bg, 'Border', 'tight');
-    hold on;
-    h2 = imagesc(1:bg_w, 1:bg_h, sub_hm);
-    colormap(jet);
-    h2.AlphaData = 0.5;
-    title('Subordinate');
-    axis equal tight;
-    xlim([1, bg_w]);
-    ylim([1, bg_h]);
-    set(gca, 'YDir', 'normal');
-    hold off;
-    
-    cb_ax = axes('Position', [0.92, 0.2, 0.02, 0.6], 'Visible', 'off');
-    colorbar(cb_ax, 'Limits', [min(dom_hm(:)), max(dom_hm(:))]);
-    
-    %% === 1. Locomotion ===
-    figure('Name', 'Locomotion Analysis', 'Position', [100, 100, 1600, 400]);
-    subplot(1,3,1);
-    hold on; box on; grid on;
-
-    bar(1, dom_avg_sp, 0.8, 'FaceColor', [0.1 0.2 0.5], ...
-        'EdgeColor', 'k', 'LineWidth', 0.5);
-    bar(2, sub_avg_sp, 0.8, 'FaceColor', [0.65 0.1 0.15], ...
-        'EdgeColor', 'k', 'LineWidth', 0.5);
-    
-    hold off;
-    
-    ylabel('Average Speed (px/s)');
-    set(gca, 'XTick', [1 2], 'XTickLabel', {'Dominant', 'Subordinate'});
-    
-    subplot(1,3,2);
-    hold on; box on; grid on;
-
-    bar(1, dom_avgm_sp, 0.8, 'FaceColor', [0.1 0.2 0.5], ...
-        'EdgeColor', 'k', 'LineWidth', 0.5);
-    bar(2, sub_avgm_sp, 0.8, 'FaceColor', [0.65 0.1 0.15], ...
-        'EdgeColor', 'k', 'LineWidth', 0.5);
-    
-    hold off;
-    
-    ylabel('Average Moving Speed (px/s)');
-    set(gca, 'XTick', [1 2], 'XTickLabel', {'Dominant', 'Subordinate'});
-
-    subplot(1,3,3);
-    hold on; box on; grid on;
-
-    bar(1, dom_mov_perc, 0.8, 'FaceColor', [0.1 0.2 0.5], ...
-        'EdgeColor', 'k', 'LineWidth', 0.5);
-    bar(2, sub_mov_perc, 0.8, 'FaceColor', [0.65 0.1 0.15], ...
-        'EdgeColor', 'k', 'LineWidth', 0.5);
-    
-    hold off;
-    
-    ylabel('Moving Percentage (%)');
-    set(gca, 'XTick', [1 2], 'XTickLabel', {'Dominant', 'Subordinate'});
-
+  
     %% === 2. Behavior Duration & Subtype Analysis ===
     count_beh = @(beh_str) sum(contains(annot_named, string(beh_str)));
     
