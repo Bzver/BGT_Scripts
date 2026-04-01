@@ -9,6 +9,8 @@ bin_min = 10;                          % Bin size in minutes for trend plot
 binSize = bin_min * 60 * fps;         % Frames per bin
 min_bout_frames = 5;                  % Minimum frames to count as a bout
 
+custom_str_header = " (SE + Mating)";
+
 root_dir = uigetdir('', 'Select Root Folder to Search for .mat Files');
 if root_dir == 0
     disp('No folder selected. Exiting.');
@@ -37,13 +39,13 @@ end_min = str2double(user_input{2});
 % Validate and set data portion parameters
 if isempty(start_min) && isempty(end_min)
     data_portion = 3;
-    portion_str = " (Full Data)";
+    portion_str = custom_str_header;
     start_frame = 1;
     end_frame = Inf;
 elseif isempty(start_min) || isempty(end_min) || isnan(start_min) || isnan(end_min)
     warning('Invalid time input. Using Full Data.');
     data_portion = 3;
-    portion_str = " (Full Data)";
+    portion_str = custom_str_header;
     start_frame = 1;
     end_frame = Inf;
 elseif start_min < 0
@@ -56,7 +58,7 @@ elseif start_min < 0
 elseif end_min <= start_min
     warning('End time must be greater than start time. Using Full Data.');
     data_portion = 3;
-    portion_str = " (Full Data - Invalid Range)";
+    portion_str = custom_str_header;
     start_frame = 1;
     end_frame = Inf;
 else
@@ -79,10 +81,37 @@ log_file = fullfile(root_dir, 'batch_mode_processing_log.txt');
 fid = fopen(log_file, 'w');
 fclose(fid);
 
+%% ==== Pre-allocate for trend data ====
+% Determine max frames
+max_frames = 0;
+for i = 1:n_files
+    try
+        S_test = load(mat_files{i});
+        if isfield(S_test, 'annotation')
+            max_frames = max(max_frames, length(S_test.annotation.annotation));
+            behaviors = S_test.annotation.behaviors;
+        end
+    catch
+    end
+end
+
 % Define behavior types
-behavior_types = {'cage', 'interact', ...                  
-                  'anogenital', 'huddling', 'mounting', ...
-                  'passive', 'sniffing', 'intromission'};
+behavior_types = {'cage', 'interact'};
+beh_keys = fieldnames(behaviors); 
+
+for i = 1:length(beh_keys)
+    beh = string(beh_keys{i});
+    if beh == "other"
+        continue;
+    end
+    beh_no_prefix = strrep(beh, "dom_", "");
+    beh_no_prefix = strrep(beh_no_prefix, "sub_", "");
+    if any(cellfun(@(x) strcmp(x, beh_no_prefix), behavior_types))
+        continue;
+    end
+    behavior_types = [behavior_types, {beh_no_prefix}];
+end
+
 n_beh = length(behavior_types);
 n_zone_beh = 2;
 
@@ -99,18 +128,6 @@ individual_metrics_bouts = zeros(n_files, n_beh);
 dom_colors = []; 
 colors_initialized = false;
 
-%% ==== Pre-allocate for trend data ====
-% Determine max frames
-max_frames = 0;
-for i = 1:n_files
-    try
-        S_test = load(mat_files{i});
-        if isfield(S_test, 'annotation')
-            max_frames = max(max_frames, length(S_test.annotation.annotation));
-        end
-    catch
-    end
-end
 n_bins = ceil(max_frames / binSize);
 
 % Trend arrays for Duration (Frames)
@@ -178,13 +195,18 @@ for i = 1:n_files
                 dom_colors = [
                     S.stat.sum_color.dom_cage;
                     S.stat.sum_color.dom_interact;
-                    S.color.dom_anogenital;
-                    S.color.dom_huddling;
-                    S.color.dom_mounting;
-                    S.color.dom_passive;
-                    S.color.dom_sniffing;
-                    S.color.dom_intromission
                 ];
+                for mmi = 1:length(beh_keys)
+                    beh = beh_keys{mmi};
+                    if strcmp(beh, 'other')
+                        continue;
+                    end
+                    if startsWith(beh, 'sub_')
+                        continue;
+                    end
+                    dom_colors = [dom_colors; S.color.(beh)];
+                end
+
             else
                 dom_colors = lines(n_beh);
             end
@@ -318,8 +340,8 @@ for i = 1:n_files
             
             % --- REGULAR BEHAVIORS ---
             else
-                dom_field = ['dom_' beh_name];
-                sub_field = ['sub_' beh_name];
+                dom_field = 'dom_'+beh_name;
+                sub_field = 'sub_'+beh_name;
                 dom_val = []; sub_val = [];
                 if isfield(behaviors, dom_field), dom_val = behaviors.(dom_field); end
                 if isfield(behaviors, sub_field), sub_val = behaviors.(sub_field); end
@@ -584,10 +606,10 @@ function plot_grouped_bar(x, m_dom, m_sub, s_dom, s_sub, raw_dom, raw_sub, color
     end
     hold off;
     ylabel(ylabel_str);
-    set(gca, 'XTick', x, 'XTickLabel', labels); xtickangle(45);
+    set(gca, 'XTick', x, 'XTickLabel', labels, 'TickLabelInterpreter', 'none'); xtickangle(45);
     title(title_str, 'Interpreter', 'none');
     ylim([0, max([m_dom+s_dom; m_sub+s_sub]) * 1.2]);
-    legend({'Dominant', 'Submissive'}, 'Location', 'best');
+    legend({'Dominant', 'Submissive'}, 'Location', 'best', 'Interpreter', 'none');
 end
 
 function plot_pi_chart(x, m, s, individual, p_vals, colors, labels, title_str, add_sep)
@@ -616,7 +638,7 @@ function plot_pi_chart(x, m, s, individual, p_vals, colors, labels, title_str, a
     end
     hold off;
     ylabel('(Dom - Sub) / (Dom + Sub)');
-    set(gca, 'XTick', x, 'XTickLabel', labels); xtickangle(45);
+    set(gca, 'XTick', x, 'XTickLabel', labels, 'TickLabelInterpreter', 'none'); xtickangle(45);
     title(title_str, 'Interpreter', 'none');
     ylim([-1, 1]);
 end
@@ -625,7 +647,6 @@ function plot_trend_figure(m_dom, m_sub, s_dom, s_sub, p_raw, time_min, labels, 
     color_dom = [0.2 0.4 0.6]; color_sub = [0.9 0.6 0.1];
     n_beh = length(labels);
     n_rows = ceil(sqrt(n_beh)); n_cols = ceil(n_beh / n_rows);
-    n_bins = length(time_min);
     
     figure('Name', sgtitle_str, 'Color', 'w', 'Position', [50, 50, 500*n_cols, 400*n_rows]);
     for beh = 1:n_beh
@@ -662,9 +683,9 @@ function plot_trend_figure(m_dom, m_sub, s_dom, s_sub, p_raw, time_min, labels, 
         ylim([0, max(max(max_val * 1.15),1)]);
         
         if ~isempty(sig_idx)
-            legend({'Dom', 'Sub', '★ p<0.05'}, 'Location', 'best', 'FontSize', 8);
+            legend({'Dom', 'Sub', '★ p<0.05'}, 'Location', 'best', 'FontSize', 8, 'Interpreter', 'none');
         else
-            legend({'Dom', 'Sub'}, 'Location', 'best', 'FontSize', 8);
+            legend({'Dom', 'Sub'}, 'Location', 'best', 'FontSize', 8, 'Interpreter', 'none');
         end
         hold off;
     end
@@ -713,9 +734,9 @@ function plot_cumulative_figure(m_dom, m_sub, s_dom, s_sub, p_raw, time_min, lab
         ylim([0, max(max(max_val * 1.05), 1)]);
         
         if ~isempty(sig_idx)
-            legend({'Dom', 'Sub', '★ p<0.05'}, 'Location', 'best', 'FontSize', 8);
+            legend({'Dom', 'Sub', '★ p<0.05'}, 'Location', 'best', 'FontSize', 8, 'Interpreter', 'none');
         else
-            legend({'Dom', 'Sub'}, 'Location', 'best', 'FontSize', 8);
+            legend({'Dom', 'Sub'}, 'Location', 'best', 'FontSize', 8, 'Interpreter', 'none');
         end
         hold off;
     end
