@@ -60,9 +60,9 @@ def shared_workflow(idd, id, dom_meta_path, dom_asoid_pred, sub_meta_path, sub_a
     dom_array, dom_behav, dom_color, dom_sum = remap_trunc_df(dom_meta_path, dom_asoid_pred)
     sub_array, sub_behav, sub_color, sub_sum = remap_trunc_df(sub_meta_path, sub_asoid_pred)
 
-    if dom_behav != sub_behav:
-        print(f"Behavior mappings differ between DOM and SUB → skipping {id}")
-        return
+    # if dom_behav != sub_behav:
+    #     print(f"Behavior mappings differ between DOM and SUB → skipping {id}")
+    #     return
 
     sub_sum[sub_sum != 0] += 2
     min_len = min(len(dom_sum), len(sub_sum))
@@ -240,6 +240,9 @@ def remap_trunc_df(
         try:
             behav_array[active_mask] = i + 1
         except IndexError:
+            min_len = min(len(used_frames), len(active_mask))
+            used_frames = used_frames[:min_len]
+            active_mask = active_mask[:min_len]
             active_original_frames = used_frames[active_mask].tolist()
             behav_array[active_original_frames] = i + 1
             next_i = i + 2
@@ -269,30 +272,30 @@ def darken_rgb_triplet(rgb_triplet:Tuple[float, float, float], percentage:int=20
     return lighten_rgb_triplet(rgb_triplet, -percentage)
 
 
-# def main():
-#     tk.Tk().withdraw()
+def remap():
+    tk.Tk().withdraw()
 
-#     print("Select the ROOT folder containing BVT export JSONs...")
-#     root_path = filedialog.askdirectory(title="Select BVT Export Root Folder")
-#     if not root_path:
-#         print("No root folder selected. Exiting.")
-#         return
+    print("Select the ROOT folder containing BVT export JSONs...")
+    root_path = filedialog.askdirectory(title="Select BVT Export Root Folder")
+    if not root_path:
+        print("No root folder selected. Exiting.")
+        return
 
-#     print("Select the ASOID predictions folder (with CSVs)...")
-#     asoid_dir = filedialog.askdirectory(title="Select ASOID Predictions Folder")
-#     if not asoid_dir:
-#         print("No ASOID folder selected. Exiting.")
-#         return
+    print("Select the ASOID predictions folder (with CSVs)...")
+    asoid_dir = filedialog.askdirectory(title="Select ASOID Predictions Folder")
+    if not asoid_dir:
+        print("No ASOID folder selected. Exiting.")
+        return
 
-#     if not os.path.isdir(root_path) or not os.path.isdir(asoid_dir):
-#         messagebox.showerror("Error", "Invalid folder selection.")
-#         return
+    if not os.path.isdir(root_path) or not os.path.isdir(asoid_dir):
+        messagebox.showerror("Error", "Invalid folder selection.")
+        return
 
-#     print(f"\nProcessing:\n  Root: {root_path}\n  ASOID: {asoid_dir}\n")
-#     aa2m_workflow(root_path, asoid_dir)
-#     print("\nProcessing complete!")
+    print(f"\nProcessing:\n  Root: {root_path}\n  ASOID: {asoid_dir}\n")
+    aa2m_workflow(root_path, asoid_dir)
+    print("\nProcessing complete!")
 
-def main():
+def no_remap():
     tk.Tk().withdraw()
 
     print("Select the ROOT folder containing BVT export JSONs...")
@@ -310,4 +313,4 @@ def main():
     print("\nProcessing complete!")
 
 if __name__ == "__main__":
-    main()
+    remap()

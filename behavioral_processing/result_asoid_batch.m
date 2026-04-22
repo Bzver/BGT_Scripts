@@ -9,6 +9,8 @@ bin_min = 10;                          % Bin size in minutes for trend plot
 binSize = bin_min * 60 * fps;         % Frames per bin
 min_bout_frames = 5;                  % Minimum frames to count as a bout
 
+custom_str_header = " (SE + Mating)";
+
 root_dir = uigetdir('', 'Select Root Folder to Search for .mat Files');
 if root_dir == 0
     disp('No folder selected. Exiting.');
@@ -37,13 +39,13 @@ end_min = str2double(user_input{2});
 % Validate and set data portion parameters
 if isempty(start_min) && isempty(end_min)
     data_portion = 3;
-    portion_str = " (Full Data)";
+    portion_str = custom_str_header;
     start_frame = 1;
     end_frame = Inf;
 elseif isempty(start_min) || isempty(end_min) || isnan(start_min) || isnan(end_min)
     warning('Invalid time input. Using Full Data.');
     data_portion = 3;
-    portion_str = " (Full Data)";
+    portion_str = custom_str_header;
     start_frame = 1;
     end_frame = Inf;
 elseif start_min < 0
@@ -56,7 +58,7 @@ elseif start_min < 0
 elseif end_min <= start_min
     warning('End time must be greater than start time. Using Full Data.');
     data_portion = 3;
-    portion_str = " (Full Data - Invalid Range)";
+    portion_str = custom_str_header;
     start_frame = 1;
     end_frame = Inf;
 else
@@ -79,10 +81,86 @@ log_file = fullfile(root_dir, 'batch_mode_processing_log.txt');
 fid = fopen(log_file, 'w');
 fclose(fid);
 
-% Define behavior types
-behavior_types = {'cage', 'interact', ...                  
-                  'anogenital', 'huddling', 'mounting', ...
-                  'passive', 'sniffing', 'intromission'};
+%% ==== Pre-allocate for trend data ====
+% Determine max frames
+max_frames = 0;
+for i = 1:n_files
+    try
+        S_test = load(mat_files{i});
+        if isfield(S_test, 'annotation')
+            max_frames = max(max_frames, length(S_test.annotation.annotation));
+            behaviors = S_test.annotation.behaviors;
+        end
+    catch
+    end
+end
+
+% ==== Define and Reorder Behavior Types ====
+behavior_types = {'cage', 'interact'};
+beh_keys = fieldnames(behaviors); 
+
+% --- Original Detection Loop (Keep this) ---
+for i = 1:length(beh_keys)
+    beh = string(beh_keys{i});
+    if beh == "other"
+        continue;
+    end
+    beh_no_prefix = strrep(beh, "dom_", "");
+    beh_no_prefix = strrep(beh_no_prefix, "sub_", "");
+    if any(cellfun(@(x) strcmp(x, char(beh_no_prefix)), behavior_types))
+        continue;
+    end
+    behavior_types = [behavior_types, {char(beh_no_prefix)}];
+end
+
+% --- NEW: Reorder Logic (Excluding Cage/Interact) ---
+fixed_behaviors = {'cage', 'interact'};
+dynamic_behaviors = behavior_types(3:end);
+
+if ~isempty(dynamic_behaviors)
+    disp('Detected Dynamic Behaviors (Cage/Interact are fixed):');
+    disp(dynamic_behaviors');
+
+    prompt = {'Enter order for dynamic behaviors (comma-separated). Leave blank for default:'};
+    dlg_title = 'Reorder Dynamic Behaviors';
+    default_order = strjoin(dynamic_behaviors, ', ');
+    user_order = inputdlg(prompt, dlg_title, [1 80], {default_order});
+
+    if ~isempty(user_order) && ~isempty(user_order{1})
+        candidate_list = strsplit(user_order{1}, ',');
+        candidate_list = strtrim(candidate_list); 
+        
+        % Validate
+        valid_reorder = true;
+        for k = 1:length(candidate_list)
+            if ~any(strcmp(candidate_list{k}, dynamic_behaviors))
+                valid_reorder = false;
+                warndlg(sprintf('Behavior "%s" not found in dynamic list.', candidate_list{k}), 'Invalid Behavior Name');
+                break;
+            end
+        end
+        if valid_reorder && length(unique(candidate_list)) ~= length(candidate_list)
+            valid_reorder = false;
+            warndlg('Duplicate behaviors in order list.', 'Invalid Order');
+        end
+        
+        if valid_reorder
+            new_dynamic_behaviors = cell(1, length(candidate_list));
+            for k = 1:length(candidate_list)
+                idx = find(strcmp(candidate_list{k}, dynamic_behaviors), 1);
+                new_dynamic_behaviors{k} = dynamic_behaviors{idx};
+            end
+            behavior_types = [fixed_behaviors, new_dynamic_behaviors];
+            disp('Behaviors reordered successfully.');
+        else
+            disp('Keeping default behavior order.');
+        end
+    end
+else
+    disp('No additional behaviors found to reorder.');
+end
+
+% --- Finalize Count ---
 n_beh = length(behavior_types);
 n_zone_beh = 2;
 
@@ -99,18 +177,6 @@ individual_metrics_bouts = zeros(n_files, n_beh);
 dom_colors = []; 
 colors_initialized = false;
 
-%% ==== Pre-allocate for trend data ====
-% Determine max frames
-max_frames = 0;
-for i = 1:n_files
-    try
-        S_test = load(mat_files{i});
-        if isfield(S_test, 'annotation')
-            max_frames = max(max_frames, length(S_test.annotation.annotation));
-        end
-    catch
-    end
-end
 n_bins = ceil(max_frames / binSize);
 
 % Trend arrays for Duration (Frames)
@@ -131,7 +197,7 @@ for i = 1:n_files
     [~, name, ~] = fileparts(mat_path);
     fprintf('\n[%d/%d] Processing: %s\n', i, n_files, name);
     
-    try
+    % try
         S = load(mat_path);
         
         if isfield(S, 'annotation')
@@ -178,13 +244,14 @@ for i = 1:n_files
                 dom_colors = [
                     S.stat.sum_color.dom_cage;
                     S.stat.sum_color.dom_interact;
-                    S.color.dom_anogenital;
-                    S.color.dom_huddling;
-                    S.color.dom_mounting;
-                    S.color.dom_passive;
-                    S.color.dom_sniffing;
-                    S.color.dom_intromission
                 ];
+                for mmi = 1:length(behavior_types)
+                    beh = ['dom_', behavior_types{mmi}];
+                    if strcmp(beh, 'other') || strcmp(beh, 'dom_cage') || strcmp(beh, 'dom_interact')
+                        continue;
+                    end
+                    dom_colors = [dom_colors; S.color.(beh)];
+                end
             else
                 dom_colors = lines(n_beh);
             end
@@ -351,16 +418,16 @@ for i = 1:n_files
         
         logMessage(log_file, sprintf('SUCCESS: %s', mat_path));
         
-    catch ME
-        warn_msg = sprintf('FAILED: %s | Error: %s', mat_path, ME.message);
-        warning(warn_msg);
-        logMessage(log_file, warn_msg);
-        % Fill NaNs on error
-        individual_metrics(i, :) = NaN;
-        individual_metrics_bouts(i, :) = NaN;
-        trend_dom(i, :, :) = NaN; trend_bouts_dom(i, :, :) = NaN; trend_bout_len_dom(i, :, :) = NaN;
-        trend_sub(i, :, :) = NaN; trend_bouts_sub(i, :, :) = NaN; trend_bout_len_sub(i, :, :) = NaN;
-    end
+    % catch ME
+    %     warn_msg = sprintf('FAILED: %s | Error: %s', mat_path, ME.message);
+    %     warning(warn_msg);
+    %     logMessage(log_file, warn_msg);
+    %     % Fill NaNs on error
+    %     individual_metrics(i, :) = NaN;
+    %     individual_metrics_bouts(i, :) = NaN;
+    %     trend_dom(i, :, :) = NaN; trend_bouts_dom(i, :, :) = NaN; trend_bout_len_dom(i, :, :) = NaN;
+    %     trend_sub(i, :, :) = NaN; trend_bouts_sub(i, :, :) = NaN; trend_bout_len_sub(i, :, :) = NaN;
+    % end
     
     fprintf('  → Done.\n');
 end
@@ -476,17 +543,55 @@ time_min = (0:n_bins-1 + 0.5) * ((binSize / fps) / 60);
 
 %% ==== Plot 0A: Raw Frame Counts (Duration) ====
 fprintf('\nCreating raw frame counts plot (Duration)...\n');
-figure('Name', 'Batch Mode: Raw Frame Counts (Duration)', 'Position', [300, 300, 950, 500]);
-plot_grouped_bar(x, mean_counts_dom, mean_counts_sub, sem_counts_dom, sem_counts_sub, ...
-    raw_counts_dom, raw_counts_sub, dom_colors, lighten_factor, behavior_types, ...
-    ['Raw Frame Counts (Duration)' portion_str], 'Frame Count', true);
+
+% --- Subplot 1: Cage behavior (log scale) ---
+ax1 = subplot(1, 2, 1);
+plot_grouped_bar(1, mean_counts_dom(1), mean_counts_sub(1), ...
+    sem_counts_dom(1), sem_counts_sub(1), raw_counts_dom(:,1), raw_counts_sub(:,1), ...
+    dom_colors(1,:), lighten_factor, behavior_types(1), ...
+    '', '', false, true);
+set(gca);
+current_ylim = ylim;
+ylim([max([current_ylim(1), 0.1]), current_ylim(2) * 1.2]);
+ylabel('Frame Count');
+
+% --- Subplot 2: Other behaviors (linear scale) ---
+ax2 = subplot(1, 2, 2);
+plot_grouped_bar(1:(n_beh-1), mean_counts_dom(2:end), mean_counts_sub(2:end), ...
+    sem_counts_dom(2:end), sem_counts_sub(2:end), ...
+    raw_counts_dom(:,2:end), raw_counts_sub(:,2:end), ...
+    dom_colors(2:end,:), lighten_factor, behavior_types(2:end), ...
+    '', '', false, false);
+xtickangle(45);
+
+% === ADJUST SUBPLOT WIDTHS ===
+% Get figure normalized units for positioning
+fig_pos = get(gcf, 'Position');
+fig_width = fig_pos(3);
+
+% Define margins and spacing (in pixels)
+left_margin = 40;      % left edge of fig
+right_margin = 40;     % right edge of fig
+gap = 0;              % space between subplots
+cage_width = 90;      % narrow width for cage subplot (pixels)
+
+% Convert to normalized units [left bottom width height]
+ax1_pos = [left_margin/fig_width, 0.15, cage_width/fig_width, 0.75];
+ax2_pos = [(left_margin + cage_width + gap)/fig_width, 0.15, ...
+           (fig_width - left_margin - cage_width - gap - right_margin)/fig_width, 0.75];
+
+set(ax1, 'Position', ax1_pos);
+set(ax2, 'Position', ax2_pos);
+
+sgtitle(['Raw Frame Counts (Duration)' portion_str], 'FontSize', 14, 'FontWeight', 'bold');
+sgtitle(['Raw Frame Counts (Duration)' portion_str], 'FontSize', 14, 'FontWeight', 'bold');
 
 %% ==== Plot 0B: Raw Bout Counts ====
 fprintf('\nCreating raw bout counts plot...\n');
 figure('Name', 'Batch Mode: Raw Bout Counts', 'Position', [300, 300, 950, 500]);
 plot_grouped_bar(x, mean_bouts_dom, mean_bouts_sub, sem_bouts_dom, sem_bouts_sub, ...
     bout_counts_dom, bout_counts_sub, dom_colors, lighten_factor, behavior_types, ...
-    ['Raw Bout Counts' portion_str], 'Number of Bouts', true);
+    ['Raw Bout Counts' portion_str], 'Number of Bouts', true, false);
 
 %% ==== Plot 1A: Preference Index (Duration) ====
 fprintf('\nCreating overall preference index plot (Duration)...\n');
@@ -529,7 +634,7 @@ fprintf('\nBatch mode complete!\n');
 
 %% ==== Helper Plotting Functions ====
 
-function plot_grouped_bar(x, m_dom, m_sub, s_dom, s_sub, raw_dom, raw_sub, colors, light_fac, labels, title_str, ylabel_str, add_sep)
+function plot_grouped_bar(x, m_dom, m_sub, s_dom, s_sub, raw_dom, raw_sub, colors, light_fac, labels, title_str, ylabel_str, add_sep, no_legend)
     hold on; box on; grid on;
     width = 0.35;
     x_dom = x - width/2;
@@ -584,10 +689,11 @@ function plot_grouped_bar(x, m_dom, m_sub, s_dom, s_sub, raw_dom, raw_sub, color
     end
     hold off;
     ylabel(ylabel_str);
-    set(gca, 'XTick', x, 'XTickLabel', labels); xtickangle(45);
+    set(gca, 'XTick', x, 'XTickLabel', labels, 'TickLabelInterpreter', 'none'); xtickangle(45);
     title(title_str, 'Interpreter', 'none');
-    ylim([0, max([m_dom+s_dom; m_sub+s_sub]) * 1.2]);
-    legend({'Dominant', 'Submissive'}, 'Location', 'best');
+    if ~no_legend
+        legend({'Dominant', 'Subordinate'}, 'Location', 'best', 'Interpreter', 'none');
+    end
 end
 
 function plot_pi_chart(x, m, s, individual, p_vals, colors, labels, title_str, add_sep)
@@ -616,7 +722,7 @@ function plot_pi_chart(x, m, s, individual, p_vals, colors, labels, title_str, a
     end
     hold off;
     ylabel('(Dom - Sub) / (Dom + Sub)');
-    set(gca, 'XTick', x, 'XTickLabel', labels); xtickangle(45);
+    set(gca, 'XTick', x, 'XTickLabel', labels, 'TickLabelInterpreter', 'none'); xtickangle(45);
     title(title_str, 'Interpreter', 'none');
     ylim([-1, 1]);
 end
@@ -625,7 +731,6 @@ function plot_trend_figure(m_dom, m_sub, s_dom, s_sub, p_raw, time_min, labels, 
     color_dom = [0.2 0.4 0.6]; color_sub = [0.9 0.6 0.1];
     n_beh = length(labels);
     n_rows = ceil(sqrt(n_beh)); n_cols = ceil(n_beh / n_rows);
-    n_bins = length(time_min);
     
     figure('Name', sgtitle_str, 'Color', 'w', 'Position', [50, 50, 500*n_cols, 400*n_rows]);
     for beh = 1:n_beh
@@ -635,9 +740,9 @@ function plot_trend_figure(m_dom, m_sub, s_dom, s_sub, p_raw, time_min, labels, 
         pb = squeeze(p_raw(1, beh, :))';
         
         plot(time_min, md, '-', 'Color', color_dom, 'LineWidth', 2, 'DisplayName', 'Dom');
-        fill([time_min, fliplr(time_min)], [md+sd, fliplr(md-sd)], color_dom, 'FaceAlpha', 0.12, 'EdgeColor', 'none');
+        fill([time_min, fliplr(time_min)], [md+sd, fliplr(md-sd)], color_dom, 'FaceAlpha', 0.12, 'EdgeColor', 'none', 'HandleVisibility', 'off');
         plot(time_min, ms, '-', 'Color', color_sub, 'LineWidth', 2, 'DisplayName', 'Sub');
-        fill([time_min, fliplr(time_min)], [ms+ss, fliplr(ms-ss)], color_sub, 'FaceAlpha', 0.12, 'EdgeColor', 'none');
+        fill([time_min, fliplr(time_min)], [ms+ss, fliplr(ms-ss)], color_sub, 'FaceAlpha', 0.12, 'EdgeColor', 'none', 'HandleVisibility', 'off');
         
         % Significance
         vp = ~isnan(pb);
@@ -662,9 +767,9 @@ function plot_trend_figure(m_dom, m_sub, s_dom, s_sub, p_raw, time_min, labels, 
         ylim([0, max(max(max_val * 1.15),1)]);
         
         if ~isempty(sig_idx)
-            legend({'Dom', 'Sub', '★ p<0.05'}, 'Location', 'best', 'FontSize', 8);
+            legend({'Dom', 'Sub', '★ p<0.05'}, 'Location', 'best', 'FontSize', 8, 'Interpreter', 'none');
         else
-            legend({'Dom', 'Sub'}, 'Location', 'best', 'FontSize', 8);
+            legend({'Dom', 'Sub'}, 'Location', 'best', 'FontSize', 8, 'Interpreter', 'none');
         end
         hold off;
     end
@@ -687,9 +792,9 @@ function plot_cumulative_figure(m_dom, m_sub, s_dom, s_sub, p_raw, time_min, lab
         sd_cum = sqrt(cumsum(sd.^2)); ss_cum = sqrt(cumsum(ss.^2));
         
         plot(time_min, md_cum, '-', 'Color', color_dom, 'LineWidth', 2, 'DisplayName', 'Dom');
-        fill([time_min, fliplr(time_min)], [md_cum+sd_cum, fliplr(md_cum-sd_cum)], color_dom, 'FaceAlpha', 0.12);
+        fill([time_min, fliplr(time_min)], [md_cum+sd_cum, fliplr(md_cum-sd_cum)], color_dom, 'FaceAlpha', 0.12, 'HandleVisibility', 'off');
         plot(time_min, ms_cum, '-', 'Color', color_sub, 'LineWidth', 2, 'DisplayName', 'Sub');
-        fill([time_min, fliplr(time_min)], [ms_cum+ss_cum, fliplr(ms_cum-ss_cum)], color_sub, 'FaceAlpha', 0.12);
+        fill([time_min, fliplr(time_min)], [ms_cum+ss_cum, fliplr(ms_cum-ss_cum)], color_sub, 'FaceAlpha', 0.12, 'HandleVisibility', 'off');
         
         vp = ~isnan(pb);
         if sum(vp) > 1
@@ -713,9 +818,9 @@ function plot_cumulative_figure(m_dom, m_sub, s_dom, s_sub, p_raw, time_min, lab
         ylim([0, max(max(max_val * 1.05), 1)]);
         
         if ~isempty(sig_idx)
-            legend({'Dom', 'Sub', '★ p<0.05'}, 'Location', 'best', 'FontSize', 8);
+            legend({'Dom', 'Sub', '★ p<0.05'}, 'Location', 'best', 'FontSize', 8, 'Interpreter', 'none');
         else
-            legend({'Dom', 'Sub'}, 'Location', 'best', 'FontSize', 8);
+            legend({'Dom', 'Sub'}, 'Location', 'best', 'FontSize', 8, 'Interpreter', 'none');
         end
         hold off;
     end

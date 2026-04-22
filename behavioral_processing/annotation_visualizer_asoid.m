@@ -1,170 +1,386 @@
 clear all;
 close all;
+clc;
 
-%%
-batch_mode = false;
+%% ==== Configuration ====
 fps = 10;
-pin_duration_seconds = 600;
+min_frames = 10;
+bin_min = 10;                          % Bin size in minutes for trend plot
+binSize = bin_min * 60 * fps;         % Frames per bin
+min_bout_frames = 5;                  % Minimum frames to count as a bout
 
-%%
-if ~batch_mode
-    [filename, pathname] = uigetfile('*.mat', 'Select MAT file');
-    if isequal(filename, 0)
-        disp('No file selected. Execution aborted.');
-        return;
-    end
-    annot_mat = fullfile(pathname, filename);
-    processSingleMatFile(annot_mat, fps, pin_duration_seconds, batch_mode);
+
+%% ==== Select Single .mat File ====
+[mat_file, file_path] = uigetfile('*.mat', 'Select Single .mat File');
+if isequal(mat_file, 0)
+    disp('No file selected. Exiting.');
+    return;
+end
+mat_path = fullfile(file_path, mat_file);
+custom_str_header = mat_file;
+
+%% ==== Ask user for time range in minutes ====
+dlg_title = 'Select Time Range for Overall Metrics (Leave both blank for Full Data)';
+prompt_lines = {
+    'Start time (minutes):', ...
+    'End time (minutes):', ...
+};
+default_vals = {'', ''};
+
+user_input = inputdlg(prompt_lines, dlg_title, [1 30], default_vals);
+
+if isempty(user_input)
+    disp('Dialog closed. Exiting.');
+    return;
+end
+
+% Parse user input
+start_min = str2double(user_input{1});
+end_min = str2double(user_input{2});
+
+% Validate and set data portion parameters
+if isempty(start_min) && isempty(end_min)
+    data_portion = 3;
+    portion_str = custom_str_header;
+    start_frame = 1;
+    end_frame = Inf;
+elseif isempty(start_min) || isempty(end_min) || isnan(start_min) || isnan(end_min)
+    warning('Invalid time input. Using Full Data.');
+    data_portion = 3;
+    portion_str = custom_str_header;
+    start_frame = 1;
+    end_frame = Inf;
+elseif start_min < 0
+    warning('Start time cannot be negative. Using 0.');
+    start_min = 0;
+    data_portion = 4;
+    portion_str = sprintf(" (%.1f-%.1f min)", start_min, end_min);
+    start_frame = 1;
+    end_frame = round(end_min * 60 * fps);
+elseif end_min <= start_min
+    warning('End time must be greater than start time. Using Full Data.');
+    data_portion = 3;
+    portion_str = custom_str_header;
+    start_frame = 1;
+    end_frame = Inf;
 else
-    root_dir = uigetdir('', 'Select Root Folder to Search for .mat Files');
-    if root_dir == 0
-        disp('No folder selected. Exiting.');
-        return;
+    data_portion = 4;
+    portion_str = sprintf(" (%.1f-%.1f min)", start_min, end_min);
+    start_frame = round(start_min * 60 * fps) + 1;
+    end_frame = round(end_min * 60 * fps);
+end
+
+%% ==== Load Data ====
+fprintf('Loading: %s\n', mat_file);
+S = load(mat_path);
+
+if ~isfield(S, 'annotation')
+    error('MAT file missing ''annotation'' field.');
+end
+
+behaviors = S.annotation.behaviors;
+annot = int32(S.annotation.annotation);
+
+has_zone_data = false;
+zone_sum = [];
+
+if isfield(S, 'stat') && isfield(S.stat, 'sum')
+    zone_sum = int32(S.stat.sum);
+    has_zone_data = true;
+    min_len = min(length(annot), length(zone_sum));
+    annot = annot(1:min_len);
+    zone_sum = zone_sum(1:min_len);
+end
+
+%% ==== Define and Reorder Behavior Types ====
+behavior_types = {'cage', 'interact'};
+beh_keys = fieldnames(behaviors); 
+% --- Original Detection Loop (Keep this) ---
+for i = 1:length(beh_keys)
+    beh = string(beh_keys{i});
+    if beh == "other"
+        continue;
     end
-    
-    % Find all .mat files recursively
-    mat_files = getAllMatFiles(root_dir);
-    n_files = length(mat_files);
-    
-    if n_files == 0
-        error('No .mat files found in "%s" or subfolders.', root_dir);
+    beh_no_prefix = strrep(beh, "dom_", "");
+    beh_no_prefix = strrep(beh_no_prefix, "sub_", "");
+    if any(cellfun(@(x) strcmp(x, char(beh_no_prefix)), behavior_types))
+        continue;
     end
-    
-    fprintf('Found %d .mat files. Starting batch_mode processing...\n', n_files);
-    log_file = fullfile(root_dir, 'batch_mode_processing_log.txt');
-    fid = fopen(log_file, 'w');
-    fclose(fid);
-    
-    % Process each file
-    for i = 1:n_files
-        mat_path = mat_files{i};
-        [~, name, ~] = fileparts(mat_path);
-        fprintf('\n[%d/%d] Processing: %s\n', i, n_files, name);
+    behavior_types = [behavior_types, {char(beh_no_prefix)}];
+end
+
+% --- NEW: Reorder Logic (Excluding Cage/Interact) ---
+fixed_behaviors = {'cage', 'interact'};
+dynamic_behaviors = behavior_types(3:end);
+
+if ~isempty(dynamic_behaviors)
+    disp('Detected Dynamic Behaviors (Cage/Interact are fixed):');
+    disp(dynamic_behaviors');
+
+    prompt = {'Enter order for dynamic behaviors (comma-separated). Leave blank for default:'};
+    dlg_title = 'Reorder Dynamic Behaviors';
+    default_order = strjoin(dynamic_behaviors, ', ');
+    user_order = inputdlg(prompt, dlg_title, [1 80], {default_order});
+
+    if ~isempty(user_order) && ~isempty(user_order{1})
+        candidate_list = strsplit(user_order{1}, ',');
+        candidate_list = strtrim(candidate_list); 
         
-        try
-            processSingleMatFile(mat_path, fps, pin_duration_seconds, batch_mode);
-            logMessage(log_file, sprintf('SUCCESS: %s', mat_path));
-        catch ME
-            warn_msg = sprintf('FAILED: %s | Error: %s', mat_path, ME.message);
-            warning(warn_msg);
-            logMessage(log_file, warn_msg);
+        % Validate
+        valid_reorder = true;
+        for k = 1:length(candidate_list)
+            if ~any(strcmp(candidate_list{k}, dynamic_behaviors))
+                valid_reorder = false;
+                warndlg(sprintf('Behavior "%s" not found in dynamic list.', candidate_list{k}), 'Invalid Behavior Name');
+                break;
+            end
+        end
+        if valid_reorder && length(unique(candidate_list)) ~= length(candidate_list)
+            valid_reorder = false;
+            warndlg('Duplicate behaviors in order list.', 'Invalid Order');
         end
         
-        % Update progress in command window
-        fprintf('  → Done. Figures saved.\n');
-    end
-    
-    fprintf('\nbatch_mode complete! Log saved to:\n%s\n', log_file);
-end
-
-%%
-function files = getAllMatFiles(root)
-    files = {};
-    dirs = dir(fullfile(root, '**', '*.mat'));
-    for k = 1:length(dirs)
-        if ~dirs(k).isdir
-            files{end+1} = fullfile(dirs(k).folder, dirs(k).name);
+        if valid_reorder
+            new_dynamic_behaviors = cell(1, length(candidate_list));
+            for k = 1:length(candidate_list)
+                idx = find(strcmp(candidate_list{k}, dynamic_behaviors), 1);
+                new_dynamic_behaviors{k} = dynamic_behaviors{idx};
+            end
+            behavior_types = [fixed_behaviors, new_dynamic_behaviors];
+            disp('Behaviors reordered successfully.');
+        else
+            disp('Keeping default behavior order.');
         end
     end
+else
+    disp('No additional behaviors found to reorder.');
 end
 
-function logMessage(logFile, msg)
-    fid = fopen(logFile, 'a');
-    if fid == -1
-        error('Could not open log file: %s', logFile);
-    end
-    % Get current time as a datetime object and format it
-    currentTime = datetime('now', 'Format', 'yyyy-MM-dd HH:mm:ss');
-    fprintf(fid, '[%s] %s\n', string(currentTime), msg);
-    fclose(fid);
+% --- Finalize Count ---
+n_beh = length(behavior_types);
+n_zone_beh = 2;
+
+%% ==== Apply Time Range Selection ====
+total_frames = length(annot);
+actual_start = min(start_frame, total_frames);
+if isinf(end_frame)
+    actual_end = total_frames;
+else
+    actual_end = min(end_frame, total_frames);
+end
+if actual_start > actual_end
+    actual_start = 1;
+    actual_end = total_frames;
 end
 
-function safe_pie(counts, labels, colors, title_str)
-    nonzero = counts > 0;
-    if ~any(nonzero)
-        text(0.5, 0.5, 'No data', 'HorizontalAlignment', 'center', ...
-             'FontSize', 12, 'Interpreter', 'none');
-        title(title_str, 'Interpreter', 'none');
-        return;
-    end
-    
-    % Extract non-zero data
-    counts_nz = counts(nonzero);
-    labels_nz = labels(nonzero);
-    colors_nz = colors(nonzero, :);
-    
-    p = pie(counts_nz, zeros(size(counts_nz)));
-    delete(findobj(p, 'Type', 'text'));
-    
-    % Color patches
-    patches = p(1:2:end);
-    n = min(length(patches), size(colors_nz, 1));
-    for i = 1:n
-        set(patches(i), 'FaceColor', colors_nz(i, :));
-    end
-    
-    % Add LEGEND instead of inline labels (prevents overlap)
-    lgd = legend(labels_nz, 'Location', 'bestoutside', 'Interpreter', 'none');
-    lgd.FontSize = 8;
-    
-    % Title
-    title(title_str, 'Interpreter', 'none');
+annot_subset = annot(actual_start:actual_end);
+if has_zone_data && ~isempty(zone_sum)
+    zone_subset = zone_sum(actual_start:actual_end);
+else
+    zone_subset = [];
 end
 
-function processSingleMatFile(annot_mat, fps, pin_duration_seconds, batch_mode)
-    S = load(annot_mat);
+%% ==== Extract Colors ====
+dom_colors = [];
+if isfield(S, 'color') && isfield(S, 'stat') && isfield(S.stat, 'sum_color')
+    dom_colors = [
+        S.stat.sum_color.dom_cage;
+        S.stat.sum_color.dom_interact;
+    ];
+    for mmi = 1:length(behavior_types)
+        beh = ['dom_', behavior_types{mmi}];
+        if strcmp(beh, 'other') || strcmp(beh, 'dom_cage') || strcmp(beh, 'dom_interact')
+            continue;
+        end
+        dom_colors = [dom_colors; S.color.(beh)];
+    end
+else
+    dom_colors = lines(n_beh);
+end
 
-    if isfield(S, 'annotation')
-        behaviors = S.annotation.behaviors;
-        annot = int32(S.annotation.annotation);
+%% ==== Calculate Overall Metrics (Duration) ====
+raw_counts_dom = zeros(1, n_beh);
+raw_counts_sub = zeros(1, n_beh);
+individual_metrics = zeros(1, n_beh);
+
+for b = 1:n_beh
+    beh_name = behavior_types{b};
+    
+    if b == 1  % 'cage'
+        if has_zone_data && ~isempty(zone_subset)
+            dom_count = sum(zone_subset == 1 | zone_subset == 2);
+            sub_count = sum(zone_subset == 3 | zone_subset == 4);
+        else
+            dom_count = 0; sub_count = 0;
+        end
+        
+    elseif b == 2  % 'interact'
+        if has_zone_data && ~isempty(zone_subset)
+            dom_count = sum(zone_subset == 2);
+            sub_count = sum(zone_subset == 4);
+        else
+            dom_count = 0; sub_count = 0;
+        end
+        
     else
-        error('MAT file missing ''annotation'' field.');
+        dom_field = ['dom_' beh_name];
+        sub_field = ['sub_' beh_name];
+        
+        dom_count = 0; sub_count = 0;
+        dom_val = []; sub_val = [];
+        
+        if isfield(behaviors, dom_field)
+            dom_val = behaviors.(dom_field);
+            dom_count = sum(annot_subset == dom_val);
+        end
+        if isfield(behaviors, sub_field)
+            sub_val = behaviors.(sub_field);
+            sub_count = sum(annot_subset == sub_val);
+        end
     end
     
-    behavior_names = string(fieldnames(behaviors));
-    [~, idx] = ismember(annot, struct2array(behaviors));
-    annot_named = behavior_names(idx);
-    num_frames_total = length(annot_named);
+    raw_counts_dom(b) = dom_count;
+    raw_counts_sub(b) = sub_count;
     
+    if (dom_count + sub_count) > min_frames
+        individual_metrics(b) = (dom_count - sub_count) / (dom_count + sub_count);
+    else
+        individual_metrics(b) = NaN;
+    end
+end
 
-    %% === 1. Behavior Duration & Subtype Analysis ===
-    count_beh = @(beh_str) sum(contains(annot_named, string(beh_str)));
+%% ==== Calculate Trend Metrics (Duration) ====
+effective_frames = length(annot);
+n_bins_actual = ceil(effective_frames / binSize);
+
+trend_dom = NaN(1, n_beh, n_bins_actual);
+trend_sub = NaN(1, n_beh, n_bins_actual);
+
+for b = 1:n_beh
+    beh_name = behavior_types{b};
     
-    total = length(annot_named);
-    dom_genita  = count_beh('dom_anogenital') ;
-    dom_hug = count_beh('dom_huddling');
-    dom_mount = count_beh('dom_mounting');
-    dom_pass = count_beh('dom_passive');
-    dom_sniff = count_beh('dom_sniffing');
-    dom_intro = count_beh('dom_intromission') + count_beh('dom_ejaculation');
-    sub_genita  = count_beh('sub_anogenital');
-    sub_hug = count_beh('sub_huddling');
-    sub_mount = count_beh('sub_mounting');
-    sub_pass = count_beh('sub_passive');
-    sub_sniff = count_beh('sub_sniffing');
-    sub_intro = count_beh('sub_intromission') + count_beh('sub_ejaculation');
-    other = count_beh('other');
+    if b == 1  % 'cage'
+        for bin = 1:n_bins_actual
+            start_idx = (bin-1)*binSize + 1;
+            end_idx = min(bin*binSize, effective_frames);
+            if start_idx > effective_frames, break; end
+            
+            if has_zone_data
+                bin_zone = zone_sum(start_idx:end_idx);
+                trend_dom(1, b, bin) = sum(bin_zone == 1 | bin_zone == 2);
+                trend_sub(1, b, bin) = sum(bin_zone == 3 | bin_zone == 4);
+            end
+        end
+        
+    elseif b == 2  % 'interact'
+        for bin = 1:n_bins_actual
+            start_idx = (bin-1)*binSize + 1;
+            end_idx = min(bin*binSize, effective_frames);
+            if start_idx > effective_frames, break; end
+            
+            if has_zone_data
+                bin_zone = zone_sum(start_idx:end_idx);
+                trend_dom(1, b, bin) = sum(bin_zone == 2);
+                trend_sub(1, b, bin) = sum(bin_zone == 4);
+            end
+        end
+    
+    else
+        dom_field = ['dom_' beh_name];
+        sub_field = ['sub_' beh_name];
+        dom_val = []; sub_val = [];
+        if isfield(behaviors, dom_field), dom_val = behaviors.(dom_field); end
+        if isfield(behaviors, sub_field), sub_val = behaviors.(sub_field); end
+        
+        for bin = 1:n_bins_actual
+            start_idx = (bin-1)*binSize + 1;
+            end_idx = min(bin*binSize, effective_frames);
+            if start_idx > effective_frames, break; end
+            
+            bin_annot = annot(start_idx:end_idx);
+            trend_dom(1, b, bin) = sum(bin_annot == dom_val);
+            trend_sub(1, b, bin) = sum(bin_annot == sub_val);
+        end
+    end
+end
 
-    behavior_labels_full = {
-        sprintf('dom_anogenital (%.1f%%)',   100*dom_genita/total);
-        sprintf('dom_huddling (%.1f%%)',     100*dom_hug/total);
-        sprintf('dom_mounting (%.1f%%)',     100*dom_mount/total);
-        sprintf('dom_passive (%.1f%%)',      100*dom_pass/total);
-        sprintf('dom_sniffing (%.1f%%)',     100*dom_sniff/total);
-        sprintf('dom_intromission (%.1f%%)',     100*dom_intro/total);
-        sprintf('sub_anogenital (%.1f%%)',   100*sub_genita/total);
-        sprintf('sub_huddling (%.1f%%)',     100*sub_hug/total);
-        sprintf('sub_mounting (%.1f%%)',     100*sub_mount/total);
-        sprintf('sub_passive (%.1f%%)',      100*sub_pass/total);
-        sprintf('sub_sniffing (%.1f%%)',     100*sub_sniff/total);
-        sprintf('sub_intromission (%.1f%%)',     100*sub_intro/total);
-        sprintf('other (%.1f%%)',            100*other/total)
-    };
+%% ==== Statistics ====
+mean_metrics = individual_metrics';
+sem_metrics = zeros(n_beh, 1);  % Single file, SEM = 0
 
-    counts_full = [dom_genita, dom_hug, dom_mount, dom_pass, dom_sniff, dom_intro  ...
-                   sub_genita, sub_hug, sub_mount, sub_pass, sub_sniff, sub_intro, other];
+p_vals = nan(n_beh, 1);
+for b = 1:n_beh
+    if ~isnan(individual_metrics(b))
+        p_vals(b) = 0;  % Single file, no statistical test
+    end
+end
 
-%% === Dual Raster Plot: Dom vs Sub ===
+% Trend statistics (single file)
+trend_dom_mean = trend_dom;
+trend_sub_mean = trend_sub;
+trend_dom_sem = zeros(size(trend_dom));
+trend_sub_sem = zeros(size(trend_sub));
+trend_p = nan(1, n_beh, n_bins_actual);
+
+time_min = (0:n_bins_actual-1 + 0.5) * ((binSize / fps) / 60);
+
+%% ==== Plot 1: Raw Frame Counts (Duration) ====
+fprintf('Creating raw frame counts plot (Duration)...\n');
+figure('Name', 'Raw Frame Counts (Duration)', 'Position', [300, 300, 950, 500], 'Color', 'w');
+
+x = 1:n_beh;
+width = 0.35;
+lighten_factor = 0.4;
+
+hold on; box on; grid on;
+for b = 1:n_beh
+    sub_color = dom_colors(b,:) + (1 - dom_colors(b,:)) * lighten_factor;
+    bar(x(b) - width/2, raw_counts_dom(b), width, 'FaceColor', dom_colors(b,:), 'EdgeColor', 'k', 'LineWidth', 0.5);
+    bar(x(b) + width/2, raw_counts_sub(b), width, 'FaceColor', sub_color, 'EdgeColor', 'k', 'LineWidth', 0.5);
+end
+
+ylabel('Frame Count');
+set(gca, 'XTick', x, 'XTickLabel', behavior_types, 'TickLabelInterpreter', 'none');
+xtickangle(45);
+title(['Raw Frame Counts (Duration)' portion_str], 'Interpreter', 'none', 'FontSize', 14, 'FontWeight', 'bold');
+legend({'Dominant', 'Submissive'}, 'Location', 'best', 'Interpreter', 'none');
+hold off;
+
+%% ==== Plot 2: Preference Index (Duration) ====
+fprintf('Creating preference index plot (Duration)...\n');
+figure('Name', 'Preference Index (Duration)', 'Position', [300, 300, 950, 500], 'Color', 'w');
+
+hold on; box on; grid on;
+for b = 1:n_beh
+    bar(x(b), mean_metrics(b), 0.6, 'FaceColor', dom_colors(b,:), 'EdgeColor', 'k', 'LineWidth', 0.5);
+end
+
+% Add individual point (single file)
+for b = 1:n_beh
+    if ~isnan(mean_metrics(b))
+        scatter(x(b), mean_metrics(b), 80, dom_colors(b,:), 'filled', 'MarkerEdgeColor', 'k');
+    end
+end
+
+ylabel('(Dom - Sub) / (Dom + Sub)');
+set(gca, 'XTick', x, 'XTickLabel', behavior_types, 'TickLabelInterpreter', 'none');
+xtickangle(45);
+title(['Preference Index (Duration)' portion_str], 'Interpreter', 'none', 'FontSize', 14, 'FontWeight', 'bold');
+ylim([-1, 1]);
+hold off;
+
+%% ==== Plot 3: Raw Duration Trend ====
+fprintf('Generating raw duration trend plot...\n');
+plot_trend_figure(trend_dom_mean, trend_sub_mean, trend_dom_sem, trend_sub_sem, trend_p, ...
+    time_min, behavior_types, 'Raw Duration Trend: Dom vs Sub', 'Duration (frames)', false);
+
+%% ==== Plot 4: Cumulative Duration Trend ====
+fprintf('Generating cumulative duration trend plot...\n');
+plot_cumulative_figure(trend_dom_mean, trend_sub_mean, trend_dom_sem, trend_sub_sem, trend_p, ...
+    time_min, behavior_types, 'Cumulative Duration Trend', 'Cumulative Duration (frames)', false);
+
+%% ==== Plot 5: Dual Behavior Raster (Dom vs Sub) ====
+fprintf('Generating dual behavior raster plot...\n');
 
 behavior_fields = fieldnames(behaviors);
 dom_ids = [];
@@ -202,7 +418,11 @@ plot_dom(annot_dom == 0) = length(dom_ids) + 1;  % other → last index
 % Colormap: dom colors + other color
 color_map_dom = zeros(length(dom_labels) + 1, 3);
 for k = 1:length(dom_labels)
-    color_map_dom(k, :) = S.color.(dom_labels{k});
+    if isfield(S.color, dom_labels{k})
+        color_map_dom(k, :) = S.color.(dom_labels{k});
+    else
+        color_map_dom(k, :) = dom_colors(min(k, size(dom_colors,1)), :);
+    end
 end
 if isfield(S.color, 'other')
     color_map_dom(end, :) = S.color.other;
@@ -225,7 +445,11 @@ plot_sub(annot_sub == 0) = length(sub_ids) + 1;
 
 color_map_sub = zeros(length(sub_labels) + 1, 3);
 for k = 1:length(sub_labels)
-    color_map_sub(k, :) = S.color.(sub_labels{k});
+    if isfield(S.color, sub_labels{k})
+        color_map_sub(k, :) = S.color.(sub_labels{k});
+    else
+        color_map_sub(k, :) = dom_colors(min(k, size(dom_colors,1)), :);
+    end
 end
 if isfield(S.color, 'other')
     color_map_sub(end, :) = S.color.other;
@@ -235,7 +459,7 @@ end
 labels_sub = [sub_labels, "other"];
 
 % --- Plot ---
-figure('Name', 'Dual Behavior Raster (Dom vs Sub)', 'Position', [100, 100, 1400, 600]);
+figure('Name', 'Dual Behavior Raster (Dom vs Sub)', 'Position', [100, 100, 1400, 600], 'Color', 'white');
 
 % Top: Dom
 ax1 = subplot(2,1,1);
@@ -243,11 +467,13 @@ imagesc(ax1, plot_dom');
 colormap(ax1, color_map_dom);
 clim(ax1, [1, size(color_map_dom,1)]);
 set(ax1, 'YTick', [], 'XTick', [], 'Box', 'on');
-title(ax1, 'Dominant Mouse Behaviors', 'FontWeight', 'bold');
+title(ax1, 'Dominant Mouse Behaviors', 'FontWeight', 'bold', 'FontSize', 12);
 
 cb1 = colorbar(ax1, 'Ticks', 1:length(labels_dom), 'TickLabels', labels_dom);
 cb1.Position = [0.92, 0.53, 0.02, 0.35];
 cb1.Label.String = 'Behavior';
+cb1.Label.FontSize = 10;
+cb1.TickLabelInterpreter = 'none';
 
 % Bottom: Sub
 ax2 = subplot(2,1,2);
@@ -255,231 +481,122 @@ imagesc(ax2, plot_sub');
 colormap(ax2, color_map_sub);
 clim(ax2, [1, size(color_map_sub,1)]);
 set(ax2, 'YTick', [], 'Box', 'on');
-xlabel(ax2, 'Frame Index');
-title(ax2, 'Subordinate Mouse Behaviors', 'FontWeight', 'bold');
+xlabel(ax2, 'Frame Index', 'FontSize', 11);
+title(ax2, 'Subordinate Mouse Behaviors', 'FontWeight', 'bold', 'FontSize', 12);
 
 cb2 = colorbar(ax2, 'Ticks', 1:length(labels_sub), 'TickLabels', labels_sub);
 cb2.Position = [0.92, 0.13, 0.02, 0.35];
 cb2.Label.String = 'Behavior';
+cb2.Label.FontSize = 10;
+cb2.TickLabelInterpreter = 'none';
 
 ax1.XAxis.Exponent = 0;
 ax1.XTick = 0:36000:length(annot);
 ax2.XAxis.Exponent = 0;
 ax2.XTick = 0:36000:length(annot);
 
-cb1.TickLabelInterpreter = 'none';
-cb2.TickLabelInterpreter = 'none';
+sgtitle(['Dual Behavior Raster Plot' portion_str], 'FontSize', 14, 'FontWeight', 'bold');
 
-set(gcf, 'Color', 'white');
-
+fprintf('\nSingle-file processing complete!\n');
+fprintf('Total frames: %d\n', length(annot));
+fprintf('Duration: %.1f minutes\n', length(annot) / (60 * fps));
 other_count = sum(annot == 0);
+fprintf('"Other" frames: %d (%.1f%%)\n', other_count, 100*other_count/length(annot));
 
-% --- Colors ---
-color_full = [
-    S.color.dom_anogenital;
-    S.color.dom_huddling;
-    S.color.dom_mounting;
-    S.color.dom_passive;
-    S.color.dom_sniffing;
-    S.color.dom_intromission;
-    S.color.sub_anogenital;
-    S.color.sub_huddling;
-    S.color.sub_mounting;
-    S.color.sub_passive;
-    S.color.sub_sniffing;
-    S.color.sub_intromission;
-    S.color.other
-];
+%% ==== Save All Figures to <mat_dir>/figures/ ====
+fprintf('\nSaving figures...\n');
 
-% --- Create figure ---
-figure('Name', 'Behavior Pie Charts', 'Position', [200, 200, 1200, 450]);
-
-% Pie 1: All behaviors
-labels_full = {'dom_anogenital','dom_huddling','dom_mounting','dom_passive','dom_sniffing', 'dom_intromission',...
-               'sub_anogenital','sub_huddling','sub_mounting','sub_passive','sub_sniffing', 'sub_intromission', 'other'};
-safe_pie(counts_full, labels_full, color_full, 'All Behaviors');
-
-%% === Grouped Bar Plot: Dom vs Sub (True Per-Behavior Colors) ===
-
-% Define behavior types (shared between dom/sub)
-behavior_types = {'anogenital', 'huddling', 'mounting', 'passive', 'sniffing', 'intromission'};
-
-% Preallocate counts and colors
-n_beh = length(behavior_types);
-dom_counts = zeros(n_beh, 1);
-sub_counts = zeros(n_beh, 1);
-dom_colors = zeros(n_beh, 3);
-sub_colors = zeros(n_beh, 3);
-
-% Extract counts and colors for each behavior type
-for i = 1:n_beh
-    beh_name = behavior_types{i};
-    
-    % Dom
-    dom_field = ['dom_' beh_name];
-    dom_counts(i) = sum(annot == behaviors.(dom_field));
-    dom_colors(i, :) = S.color.(dom_field);
-    
-    % Sub
-    sub_field = ['sub_' beh_name];
-    sub_counts(i) = sum(annot == behaviors.(sub_field));
-    sub_colors(i, :) = S.color.(sub_field);
+% Create output folder
+[pathname, name, ext] = fileparts(mat_path);
+filename = [name, ext];  % e.g., 'data.mat'
+figures_dirname = strrep(filename, '.mat', '_figures');
+figures_dir = fullfile(pathname, figures_dirname);
+if ~exist(figures_dir, 'dir')
+    mkdir(figures_dir);
 end
 
-% Create grouped bar plot manually (for full color control)
-figure('Name', 'Dom vs Sub Behavior Comparison', 'Position', [300, 300, 950, 500]);
-hold on;
+% Get all open figure handles
+fig_handles = findobj('Type', 'figure');
 
-x = 1:n_beh;           % x positions
-width = 0.35;          % bar width
-
-% Plot dom bars (left)
-b1 = bar(x - width/2, dom_counts, width);
-set(b1, 'FaceColor', 'flat', 'CData', dom_colors);
-
-% Plot sub bars (right)
-b2 = bar(x + width/2, sub_counts, width);
-set(b2, 'FaceColor', 'flat', 'CData', sub_colors);
-
-hold off;
-
-% Labels
-xticks(x);
-xticklabels(behavior_types);
-xtickangle(45);  % prevent overlap
-xlabel('Behavior Type');
-ylabel('Frame Count');
-title('Dominant vs Subordinate Behavior Frequency', 'Interpreter', 'none');
-
-% Legend
-legend([b1(1), b2(1)], 'Dominant', 'Subordinate', ...
-       'Location', 'northwest', 'Interpreter', 'none');
-
-% Clean up
-grid on;
-box on;
-set(gca, 'TickLabelInterpreter', 'none');  % prevent _ → subscript
-set(gcf, 'Color', 'white');
-
-%% === Dual Trend Plots: Dom vs Sub ===
-
-% Parameters (reuse from earlier)
-pin_duration_frames = pin_duration_seconds * fps;
-num_bins = floor(num_frames_total / pin_duration_frames);
-if num_bins < 1
-    warning('Not enough frames for trend analysis.');
-else
-    time_minutes = (0.5:num_bins-0.5) * (pin_duration_frames / fps / 60);
-    
-    % Behavior types (same as bar plot)
-    behavior_types = {'anogenital', 'huddling', 'mounting', 'passive', 'sniffing', 'intromission'};
-    n_beh = length(behavior_types);
-    
-    % --- Prepare data matrices ---
-    % Each row = time bin, each column = behavior type (NO "other")
-    dom_trends = zeros(num_bins, n_beh);
-    sub_trends = zeros(num_bins, n_beh);
-    
-    dom_ids = zeros(size(behavior_types));
-    sub_ids = zeros(size(behavior_types));
-    
-    for lkj = 1:length(behavior_types)
-        beh_name = behavior_types{lkj};
-        dom_ids(lkj) = behaviors.(['dom_' beh_name]);
-        sub_ids(lkj) = behaviors.(['sub_' beh_name]);
-    end
-        
-    % --- Process each time bin ---
-    for kp = 1:num_bins
-        start_idx = (kp-1)*pin_duration_frames + 1;
-        end_idx = min(kp*pin_duration_frames, num_frames_total);
-        segment = annot(start_idx:end_idx);
-        seg_len = end_idx - start_idx + 1;
-        
-        % Top: Dom trends (sub → ignore, only count dom behaviors)
-        seg_dom = segment;
-        % Only keep dom behaviors, ignore everything else (sub + other)
-        valid_dom = ismember(seg_dom, dom_ids);
-        for b = 1:n_beh
-            dom_trends(kp, b) = sum(seg_dom(valid_dom) == dom_ids(b));
-        end
-        dom_trends(kp, :) = dom_trends(kp, :) / seg_len;  % normalize by total segment length
-        
-        % Bottom: Sub trends (dom → ignore, only count sub behaviors)
-        seg_sub = segment;
-        valid_sub = ismember(seg_sub, sub_ids);
-        for b = 1:n_beh
-            sub_trends(kp, b) = sum(seg_sub(valid_sub) == sub_ids(b));
-        end
-        sub_trends(kp, :) = sub_trends(kp, :) / seg_len;  % normalize by total segment length
+% Save each figure as PNG (600 dpi)
+for i = 1:length(fig_handles)
+    fig = fig_handles(i);
+    fig_name = fig.Name;
+    if isempty(fig_name) || strcmp(fig_name, 'Figure 1')  % fallback
+        fig_name = sprintf('figure_%d', i);
     end
     
-    % Smooth trends
-    window = min(3, num_bins);
-    dom_trends_smooth = movmean(dom_trends, window, 1);
-    sub_trends_smooth = movmean(sub_trends, window, 1);
+    % Remove invalid filename characters
+    fig_name = regexprep(fig_name, '[\\/:*?"<>|]', '_');
     
-    % Get colors (only 6 behaviors, no "other")
-    dom_colors = [
-        S.color.dom_anogenital;
-        S.color.dom_huddling;
-        S.color.dom_mounting;
-        S.color.dom_passive;
-        S.color.dom_sniffing;
-        S.color.dom_intromission
-    ];
-    sub_colors = [
-        S.color.sub_anogenital;
-        S.color.sub_huddling;
-        S.color.sub_mounting;
-        S.color.sub_passive;
-        S.color.sub_sniffing;
-        S.color.sub_intromission
-    ];
+    png_path = fullfile(figures_dir, [fig_name, '.png']);
+    exportgraphics(fig, png_path, 'Resolution', 600, 'ContentType', 'auto');
     
-    % Labels (no "other")
-    dom_labels = strcat("dom_", behavior_types);
-    sub_labels = strcat("sub_", behavior_types);
-    
-    % Find global y-limit for both plots
-    global_ymax = max([max(dom_trends_smooth(:)), max(sub_trends_smooth(:))]);
-    global_ylim = [0, global_ymax];
-    
-    % --- Plot ---
-    figure('Name', 'Behavior Trends Over Time', 'Position', [400, 200, 1000, 600]);
-    
-    % Top: Dom
-    subplot(2,1,1);
-    hold on;
-    for b = 1:size(dom_trends_smooth, 2)
-        plot(time_minutes, dom_trends_smooth(:, b), 'LineWidth', 2, ...
-             'Color', dom_colors(b, :), 'DisplayName', dom_labels{b});
-    end
-    hold off;
-    ylabel('Probability');
-    title('Dominant Mouse Behavior Trends', 'Interpreter', 'none');
-    grid on; box on;
-    legend('Location', 'eastoutside', 'Interpreter', 'none');
-    set(gca, 'TickLabelInterpreter', 'none', 'XLim', [min(time_minutes) max(time_minutes)], ...
-        'YLim', global_ylim);
-    
-    % Bottom: Sub
-    subplot(2,1,2);
-    hold on;
-    for b = 1:size(sub_trends_smooth, 2)
-        plot(time_minutes, sub_trends_smooth(:, b), 'LineWidth', 2, ...
-             'Color', sub_colors(b, :), 'DisplayName', sub_labels{b});
-    end
-    hold off;
-    xlabel('Time (minutes)');
-    ylabel('Probability');
-    title('Subordinate Mouse Behavior Trends', 'Interpreter', 'none');
-    grid on; box on;
-    legend('Location', 'eastoutside', 'Interpreter', 'none');
-    set(gca, 'TickLabelInterpreter', 'none', 'XLim', [min(time_minutes) max(time_minutes)], ...
-        'YLim', global_ylim);
-    
-    set(gcf, 'Color', 'white');
+    fprintf('Saved: %s.png\n', fig_name);
 end
 
+fprintf('\nAll figures saved to:\n%s\n', figures_dir);
+
+%% ==== Helper Plotting Functions ====
+
+function plot_trend_figure(m_dom, m_sub, s_dom, s_sub, p_raw, time_min, labels, sgtitle_str, ylabel_str, ~)
+    color_dom = [0.2 0.4 0.6]; color_sub = [0.9 0.6 0.1];
+    n_beh = length(labels);
+    n_rows = ceil(sqrt(n_beh)); n_cols = ceil(n_beh / n_rows);
+    
+    figure('Name', 'Raw Duration Trend', 'Color', 'w', 'Position', [50, 50, 500*n_cols, 400*n_rows]);
+    for beh = 1:n_beh
+        subplot(n_rows, n_cols, beh); hold on; box on; grid on;
+        md = squeeze(m_dom(1, beh, :))'; ms = squeeze(m_sub(1, beh, :))';
+        sd = squeeze(s_dom(1, beh, :))'; ss = squeeze(s_sub(1, beh, :))';
+        pb = squeeze(p_raw(1, beh, :))';
+        
+        plot(time_min, md, '-', 'Color', color_dom, 'LineWidth', 2, 'DisplayName', 'Dom');
+        fill([time_min, fliplr(time_min)], [md+sd, fliplr(md-sd)], color_dom, 'FaceAlpha', 0.12, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+        plot(time_min, ms, '-', 'Color', color_sub, 'LineWidth', 2, 'DisplayName', 'Sub');
+        fill([time_min, fliplr(time_min)], [ms+ss, fliplr(ms-ss)], color_sub, 'FaceAlpha', 0.12, 'EdgeColor', 'none', 'HandleVisibility', 'off');
+        
+        % Significance (single file - no stars)
+        xlabel('Time (min)'); ylabel(ylabel_str);
+        title(labels{beh}, 'Interpreter', 'none');
+        xlim([0, max(time_min) + 5]);
+        max_val = max([md+sd; ms+ss]);
+        ylim([0, max(max(max_val * 1.15),1)]);
+        
+        legend({'Dom', 'Sub'}, 'Location', 'best', 'FontSize', 8, 'Interpreter', 'none');
+        hold off;
+    end
+    sgtitle(sgtitle_str, 'FontSize', 14, 'FontWeight', 'bold');
+end
+
+function plot_cumulative_figure(m_dom, m_sub, s_dom, s_sub, p_raw, time_min, labels, sgtitle_str, ylabel_str, ~)
+    color_dom = [0.2 0.4 0.6]; color_sub = [0.9 0.6 0.1];
+    n_beh = length(labels);
+    n_rows = ceil(sqrt(n_beh)); n_cols = ceil(n_beh / n_rows);
+    
+    figure('Name', 'Cumulative Duration Trend', 'Color', 'w', 'Position', [50, 50, 500*n_cols, 400*n_rows]);
+    for beh = 1:n_beh
+        subplot(n_rows, n_cols, beh); hold on; box on; grid on;
+        md = squeeze(m_dom(1, beh, :))'; ms = squeeze(m_sub(1, beh, :))';
+        sd = squeeze(s_dom(1, beh, :))'; ss = squeeze(s_sub(1, beh, :))';
+        pb = squeeze(p_raw(1, beh, :))';
+        
+        md_cum = cumsum(md); ms_cum = cumsum(ms);
+        sd_cum = sqrt(cumsum(sd.^2)); ss_cum = sqrt(cumsum(ss.^2));
+        
+        plot(time_min, md_cum, '-', 'Color', color_dom, 'LineWidth', 2, 'DisplayName', 'Dom');
+        fill([time_min, fliplr(time_min)], [md_cum+sd_cum, fliplr(md_cum-sd_cum)], color_dom, 'FaceAlpha', 0.12, 'HandleVisibility', 'off');
+        plot(time_min, ms_cum, '-', 'Color', color_sub, 'LineWidth', 2, 'DisplayName', 'Sub');
+        fill([time_min, fliplr(time_min)], [ms_cum+ss_cum, fliplr(ms_cum-ss_cum)], color_sub, 'FaceAlpha', 0.12, 'HandleVisibility', 'off');
+        
+        xlabel('Time (min)'); ylabel(ylabel_str);
+        title(labels{beh}, 'Interpreter', 'none');
+        xlim([0, max(time_min) + 5]);
+        max_val = max([md_cum+sd_cum; ms_cum+ss_cum]);
+        ylim([0, max(max(max_val * 1.05), 1)]);
+        
+        legend({'Dom', 'Sub'}, 'Location', 'best', 'FontSize', 8, 'Interpreter', 'none');
+        hold off;
+    end
+    sgtitle(sgtitle_str, 'FontSize', 14, 'FontWeight', 'bold');
 end
