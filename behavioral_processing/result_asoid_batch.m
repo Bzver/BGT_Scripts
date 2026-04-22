@@ -385,8 +385,8 @@ for i = 1:n_files
             
             % --- REGULAR BEHAVIORS ---
             else
-                dom_field = ['dom_' beh_name];
-                sub_field = ['sub_' beh_name];
+                dom_field = 'dom_'+beh_name;
+                sub_field = 'sub_'+beh_name;
                 dom_val = []; sub_val = [];
                 if isfield(behaviors, dom_field), dom_val = behaviors.(dom_field); end
                 if isfield(behaviors, sub_field), sub_val = behaviors.(sub_field); end
