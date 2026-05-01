@@ -5,9 +5,14 @@ clc;
 %% ==== Configuration ====
 fps = 10;
 min_frames = 10;
-bin_min = 10;                          % Bin size in minutes for trend plot
+bin_min = 30;                          % Bin size in minutes for trend plot
 binSize = bin_min * 60 * fps;         % Frames per bin
 min_bout_frames = 5;                  % Minimum frames to count as a bout
+
+% === NEW OPTION: Group dynamic behaviors by prefix ===
+% If true, 'dom_groom_face' and 'dom_groom_body' will be collapsed into 'groom'.
+% 'dom_' and 'sub_' are treated as category prefixes, not behavior prefixes.
+group_by_prefix = false; 
 
 custom_str_header = " (SE + Mating)";
 
@@ -99,18 +104,38 @@ end
 behavior_types = {'cage', 'interact'};
 beh_keys = fieldnames(behaviors); 
 
-% --- Original Detection Loop (Keep this) ---
+% --- Original Detection Loop (Modified for Prefix Grouping) ---
 for i = 1:length(beh_keys)
     beh = string(beh_keys{i});
     if beh == "other"
         continue;
     end
+    
+    % Remove dom_/sub_ to get the raw behavior name
     beh_no_prefix = strrep(beh, "dom_", "");
     beh_no_prefix = strrep(beh_no_prefix, "sub_", "");
+    
+    % Check if it's already in the fixed list
     if any(cellfun(@(x) strcmp(x, char(beh_no_prefix)), behavior_types))
         continue;
     end
-    behavior_types = [behavior_types, {char(beh_no_prefix)}];
+    
+    target_name = char(beh_no_prefix);
+    
+    % === NEW: Group by prefix logic ===
+    if group_by_prefix
+        % Check if there is an underscore in the behavior name (e.g., "groom_face")
+        if contains(target_name, '_')
+            % Split by underscore and take the first part
+            parts = strsplit(target_name, '_');
+            target_name = parts{1};
+        end
+    end
+    
+    % Add to list if not already present
+    if ~any(strcmp(target_name, behavior_types))
+        behavior_types = [behavior_types, {target_name}];
+    end
 end
 
 % --- NEW: Reorder Logic (Excluding Cage/Interact) ---
@@ -250,7 +275,13 @@ for i = 1:n_files
                     if strcmp(beh, 'other') || strcmp(beh, 'dom_cage') || strcmp(beh, 'dom_interact')
                         continue;
                     end
-                    dom_colors = [dom_colors; S.color.(beh)];
+                    % Try to find color. If grouped, we might just take the first match or default
+                    if isfield(S.color, beh)
+                         dom_colors = [dom_colors; S.color.(beh)];
+                    else
+                         % Fallback for grouped behaviors if specific color field doesn't exist
+                         dom_colors = [dom_colors; lines(1)]; 
+                    end
                 end
             else
                 dom_colors = lines(n_beh);
@@ -286,24 +317,60 @@ for i = 1:n_files
                 end
                 
             else
-                % --- REGULAR BEHAVIORS ---
-                dom_field = ['dom_' beh_name];
-                sub_field = ['sub_' beh_name];
+                % --- REGULAR BEHAVIORS (With Optional Prefix Grouping) ---
                 
                 dom_count = 0; sub_count = 0;
-                dom_val = []; sub_val = [];
+                dom_bouts_all = []; sub_bouts_all = [];
                 
-                if isfield(behaviors, dom_field)
-                    dom_val = behaviors.(dom_field);
-                    dom_count = sum(annot_subset == dom_val);
+                % Get all field names from behaviors struct
+                all_fields = fieldnames(behaviors);
+                
+                for f = 1:length(all_fields)
+                    fname = all_fields{f};
+                    val = behaviors.(fname);
+                    
+                    % Skip if value is empty or 0
+                    if isempty(val) || val == 0, continue; end
+                    
+                    is_dom = false;
+                    is_sub = false;
+                    base_name = fname;
+                    
+                    if startsWith(fname, 'dom_')
+                        is_dom = true;
+                        base_name = fname(5:end); % Remove 'dom_'
+                    elseif startsWith(fname, 'sub_')
+                        is_sub = true;
+                        base_name = fname(5:end); % Remove 'sub_'
+                    else
+                        continue; % Not a behavior field
+                    end
+                    
+                    % Determine the matching key
+                    match_key = base_name;
+                    if group_by_prefix
+                        if contains(base_name, '_')
+                            parts = strsplit(base_name, '_');
+                            match_key = parts{1};
+                        end
+                    end
+                    
+                    % Check if this field belongs to the current behavior category 'beh_name'
+                    if strcmp(match_key, beh_name)
+                        if is_dom
+                            dom_count = dom_count + sum(annot_subset == val);
+                            bouts_tmp = extract_bout_durations(annot_subset, val, min_bout_frames);
+                            dom_bouts_all = [dom_bouts_all; bouts_tmp];
+                        elseif is_sub
+                            sub_count = sub_count + sum(annot_subset == val);
+                            bouts_tmp = extract_bout_durations(annot_subset, val, min_bout_frames);
+                            sub_bouts_all = [sub_bouts_all; bouts_tmp];
+                        end
+                    end
                 end
-                if isfield(behaviors, sub_field)
-                    sub_val = behaviors.(sub_field);
-                    sub_count = sum(annot_subset == sub_val);
-                end
-
-                dom_bouts = extract_bout_durations(annot_subset, dom_val, min_bout_frames);
-                sub_bouts = extract_bout_durations(annot_subset, sub_val, min_bout_frames);
+                
+                dom_bouts = dom_bouts_all;
+                sub_bouts = sub_bouts_all;
             end
             
             % STORE DURATION COUNTS
@@ -383,13 +450,18 @@ for i = 1:n_files
                     end
                 end
             
-            % --- REGULAR BEHAVIORS ---
+            % --- REGULAR BEHAVIORS (With Optional Prefix Grouping) ---
             else
-                dom_field = 'dom_'+beh_name;
-                sub_field = 'sub_'+beh_name;
-                dom_val = []; sub_val = [];
-                if isfield(behaviors, dom_field), dom_val = behaviors.(dom_field); end
-                if isfield(behaviors, sub_field), sub_val = behaviors.(sub_field); end
+                % We need to aggregate trends for all fields matching the prefix
+                % Initialize bin accumulators
+                bin_trend_dom = 0;
+                bin_trend_sub = 0;
+                bin_bouts_dom = 0;
+                bin_bouts_sub = 0;
+                bin_lens_dom = [];
+                bin_lens_sub = [];
+                
+                all_fields = fieldnames(behaviors);
                 
                 for bin = 1:n_bins_actual
                     start_idx = (bin-1)*binSize + 1;
@@ -398,20 +470,71 @@ for i = 1:n_files
                     
                     bin_annot = annot(start_idx:end_idx);
                     
-                    % Duration
-                    trend_dom(i, b, bin) = sum(bin_annot == dom_val);
-                    trend_sub(i, b, bin) = sum(bin_annot == sub_val);
+                    % Reset accumulators for this bin if we were doing cumulative, 
+                    % but here we calculate per bin then assign. 
+                    % Actually, since we loop bins inside fields or fields inside bins?
+                    % To optimize, let's loop fields once per behavior, accumulate into temp arrays?
+                    % No, simpler to keep structure similar to original but sum up matches.
                     
-                    % Bout Count
-                    trend_bouts_dom(i, b, bin) = count_bouts_in_bin(bin_annot, dom_val, min_bout_frames);
-                    trend_bouts_sub(i, b, bin) = count_bouts_in_bin(bin_annot, sub_val, min_bout_frames);
+                    % Let's restart the bin loop logic slightly to handle aggregation cleanly
+                end
+                
+                % Revised Loop for Regular Behaviors Trends:
+                % Iterate through bins
+                for bin = 1:n_bins_actual
+                    start_idx = (bin-1)*binSize + 1;
+                    end_idx = min(bin*binSize, effective_frames);
+                    if start_idx > effective_frames, break; end
                     
-                    % Mean Bout Length
-                    lens_dom = get_bout_lengths_in_bin(bin_annot, dom_val, min_bout_frames);
-                    lens_sub = get_bout_lengths_in_bin(bin_annot, sub_val, min_bout_frames);
+                    bin_annot = annot(start_idx:end_idx);
                     
-                    trend_bout_len_dom(i, b, bin) = mean(lens_dom);
-                    trend_bout_len_sub(i, b, bin) = mean(lens_sub);
+                    c_dom_dur = 0; c_sub_dur = 0;
+                    c_dom_bouts = 0; c_sub_bouts = 0;
+                    l_dom = []; l_sub = [];
+                    
+                    for f = 1:length(all_fields)
+                        fname = all_fields{f};
+                        val = behaviors.(fname);
+                        if isempty(val) || val == 0, continue; end
+                        
+                        is_dom = false; is_sub = false;
+                        base_name = fname;
+                        
+                        if startsWith(fname, 'dom_')
+                            is_dom = true; base_name = fname(5:end);
+                        elseif startsWith(fname, 'sub_')
+                            is_sub = true; base_name = fname(5:end);
+                        else
+                            continue;
+                        end
+                        
+                        match_key = base_name;
+                        if group_by_prefix
+                            if contains(base_name, '_')
+                                parts = strsplit(base_name, '_');
+                                match_key = parts{1};
+                            end
+                        end
+                        
+                        if strcmp(match_key, beh_name)
+                            if is_dom
+                                c_dom_dur = c_dom_dur + sum(bin_annot == val);
+                                c_dom_bouts = c_dom_bouts + count_bouts_in_bin(bin_annot, val, min_bout_frames);
+                                l_dom = [l_dom; get_bout_lengths_in_bin(bin_annot, val, min_bout_frames)];
+                            elseif is_sub
+                                c_sub_dur = c_sub_dur + sum(bin_annot == val);
+                                c_sub_bouts = c_sub_bouts + count_bouts_in_bin(bin_annot, val, min_bout_frames);
+                                l_sub = [l_sub; get_bout_lengths_in_bin(bin_annot, val, min_bout_frames)];
+                            end
+                        end
+                    end
+                    
+                    trend_dom(i, b, bin) = c_dom_dur;
+                    trend_sub(i, b, bin) = c_sub_dur;
+                    trend_bouts_dom(i, b, bin) = c_dom_bouts;
+                    trend_bouts_sub(i, b, bin) = c_sub_bouts;
+                    trend_bout_len_dom(i, b, bin) = mean(l_dom);
+                    trend_bout_len_sub(i, b, bin) = mean(l_sub);
                 end
             end
         end
@@ -586,49 +709,21 @@ set(ax2, 'Position', ax2_pos);
 sgtitle(['Raw Frame Counts (Duration)' portion_str], 'FontSize', 14, 'FontWeight', 'bold');
 sgtitle(['Raw Frame Counts (Duration)' portion_str], 'FontSize', 14, 'FontWeight', 'bold');
 
-%% ==== Plot 0B: Raw Bout Counts ====
-fprintf('\nCreating raw bout counts plot...\n');
-figure('Name', 'Batch Mode: Raw Bout Counts', 'Position', [300, 300, 950, 500]);
-plot_grouped_bar(x, mean_bouts_dom, mean_bouts_sub, sem_bouts_dom, sem_bouts_sub, ...
-    bout_counts_dom, bout_counts_sub, dom_colors, lighten_factor, behavior_types, ...
-    ['Raw Bout Counts' portion_str], 'Number of Bouts', true, false);
-
 %% ==== Plot 1A: Preference Index (Duration) ====
 fprintf('\nCreating overall preference index plot (Duration)...\n');
 figure('Name', 'Batch Mode: PI (Duration)', 'Position', [300, 300, 950, 500]);
 plot_pi_chart(x, mean_metrics, sem_metrics, individual_metrics, p_vals, ...
     dom_colors, behavior_types, ['Preference Index (Duration)' portion_str], true);
 
-%% ==== Plot 1B: Preference Index (Bout Counts) ====
-fprintf('\nCreating overall preference index plot (Bout Counts)...\n');
-figure('Name', 'Batch Mode: PI (Bout Counts)', 'Position', [300, 300, 950, 500]);
-plot_pi_chart(x, mean_metrics_bouts, sem_metrics_bouts, individual_metrics_bouts, p_vals_bouts, ...
-    dom_colors, behavior_types, ['Preference Index (Bout Counts)' portion_str], true);
-
 %% ==== Plot 2A: Raw Duration Trend ====
 fprintf('Generating raw duration trend plot...\n');
 plot_trend_figure(trend_dom_mean, trend_sub_mean, trend_dom_sem, trend_sub_sem, trend_p, ...
     time_min, behavior_types, 'Raw Duration Trend: Dom vs Sub', 'Duration (frames)', false);
 
-%% ==== Plot 2B: Raw Bout Count Trend ====
-fprintf('Generating raw bout count trend plot...\n');
-plot_trend_figure(trend_bouts_dom_mean, trend_bouts_sub_mean, trend_bouts_dom_sem, trend_bouts_sub_sem, trend_bouts_p, ...
-    time_min, behavior_types, 'Raw Bout Count Trend: Dom vs Sub', 'Number of Bouts', false);
-
 %% ==== Plot 3A: Cumulative Duration Trend ====
 fprintf('Generating cumulative duration trend plot...\n');
 plot_cumulative_figure(trend_dom_mean, trend_sub_mean, trend_dom_sem, trend_sub_sem, trend_p, ...
     time_min, behavior_types, 'Cumulative Duration Trend', 'Cumulative Duration (frames)', false);
-
-%% ==== Plot 3B: Cumulative Bout Count Trend ====
-fprintf('Generating cumulative bout count trend plot...\n');
-plot_cumulative_figure(trend_bouts_dom_mean, trend_bouts_sub_mean, trend_bouts_dom_sem, trend_bouts_sub_sem, trend_bouts_p, ...
-    time_min, behavior_types, 'Cumulative Bout Count Trend', 'Cumulative Bout Count', false);
-
-%% ==== Plot 4: Mean Bout Length Trend (NEW) ====
-fprintf('Generating mean bout length trend plot...\n');
-plot_trend_figure(trend_len_dom_mean, trend_len_sub_mean, trend_len_dom_sem, trend_len_sub_sem, trend_len_p, ...
-    time_min, behavior_types, 'Mean Bout Duration Over Time', 'Avg Bout Length (frames)', false);
 
 fprintf('\nBatch mode complete!\n');
 

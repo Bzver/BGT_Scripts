@@ -1,6 +1,7 @@
 import os
 import re
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 from scipy import stats
 from typing import Dict, Tuple, List, Optional
@@ -200,7 +201,6 @@ def _bin_annotation_to_time_series(annot_array: np.ndarray, behavior_map: Dict[s
     result = np.zeros((n_beh, n_time))
     
     for beh_name, beh_idx in behavior_map.items():
-        print(f"{beh_name}: {beh_idx}")
         mask = (annot_array == beh_idx)
         for ti in range(n_time):
             start_frame = int(time_bins[ti] / frame_to_sec)
@@ -470,7 +470,6 @@ def plot_trend_figure(nex_files: List[str], ctrl_files: List[str],
     behavior_map = beh_map
     n_beh = len(behavior_map)
     
-    # Time axis: 0 to 720 min
     time_min = np.arange(0, 720 + bin_size_min/2, bin_size_min)
     n_time = len(time_min) - 1
     
@@ -765,6 +764,55 @@ def plot_cumulative_figure(nex_files: List[str], ctrl_files: List[str],
     return fig, axes, stats_summary
 
 
+def export_bin_data_to_csv(file_list: List[str], output_dir: str, 
+                           time_bins: np.ndarray, cutoff: Optional[int] = None,
+                           frame_to_sec: float = 1/30):
+    """
+    Export binned behavior data to CSV files.
+    Each file generates one table where:
+    - Rows: Behaviors
+    - Columns: Time Bins (labeled by start time)
+    - Values: Duration in seconds
+    """
+    if not file_list:
+        return
+
+    print(f"  Exporting bin data for {len(file_list)} files...")
+    os.makedirs(output_dir, exist_ok=True)
+
+    for f in file_list:
+        annot_arr, bmap = annot_to_array(f, cutoff)
+        if annot_arr is None or len(annot_arr) == 0:
+            print(f"    Skipping {os.path.basename(f)} (no data)")
+            continue
+
+        # Filter out 'other' from the map for the table if desired, 
+        # but keeping it ensures all data is represented. 
+        # Let's keep all behaviors found in the file.
+        
+        # Generate time series matrix (n_behaviors, n_time_bins)
+        # We need to ensure the behavior map used for binning matches the one we want to report
+        series_matrix = _bin_annotation_to_time_series(annot_arr, bmap, time_bins, frame_to_sec)
+        
+        # Create DataFrame
+        # Rows: Behaviors, Cols: Time Bins
+        behavior_names = list(bmap.keys())
+        # Sort behavior names by their index to match the matrix rows
+        behavior_names_sorted = sorted(behavior_names, key=lambda k: bmap[k])
+        
+        # Create column headers based on time bin start times
+        col_headers = [f"{time_bins[i]:.1f}s" for i in range(len(time_bins) - 1)]
+        
+        df = pd.DataFrame(series_matrix, index=behavior_names_sorted, columns=col_headers)
+        
+        # Construct output filename
+        base_name = os.path.splitext(os.path.basename(f))[0]
+        out_file = os.path.join(output_dir, f"{base_name}_binned_data.csv")
+        
+        df.to_csv(out_file)
+        print(f"    ✓ Saved: {out_file}")
+
+
 def bavis_workflow(root_path: str, output_dir: Optional[str] = None, 
                    cutoff: Optional[int] = None, fps: int=10, 
                    output_format: str = 'png'):
@@ -795,6 +843,16 @@ def bavis_workflow(root_path: str, output_dir: Optional[str] = None,
     # Step 2: Extract behavior labels
     for f in nex_files + ctrl_files:
         _, bmap = annot_to_array(f, cutoff)
+
+    bin_size_min = 5.0
+    time_min = np.arange(0, 720 + bin_size_min/2, bin_size_min)
+
+    # Step 2.5: Export Bin Data to CSV
+    print("Step 2.5: Exporting binned data to CSV tables...")
+    csv_output_dir = os.path.join(output_dir, "csv_tables")
+    all_files = nex_files + ctrl_files
+    export_bin_data_to_csv(all_files, csv_output_dir, time_min, cutoff, frame_to_sec)
+    print()
     
     # Step 3: Generate Plot 1 - Grouped Bar
     print("Step 3: Generating Plot 1 - Grouped Bar Chart")

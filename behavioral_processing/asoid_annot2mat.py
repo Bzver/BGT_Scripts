@@ -152,6 +152,12 @@ def find_corresponding_asoid_pred(json_path:str, asoid_dir:str) -> str:
     json_name = os.path.basename(json_path)
     asoid_pred = os.path.join(asoid_dir, json_name.replace(".json", "_pred_annotated_iteration-0.csv"))
     if not os.path.isfile(asoid_pred):
+        i = 1
+        while i < 100:
+            asoid_pred = os.path.join(asoid_dir, json_name.replace(".json", f"_pred_annotated_iteration-{i}.csv"))
+            if os.path.isfile(asoid_pred):
+                return asoid_pred
+            i += 1
         return
     return asoid_pred
 
