@@ -1,0 +1,718 @@
+import os
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.mixture import GaussianMixture
+from typing import Union, List, Tuple
+import matplotlib.animation as animation
+from scipy.ndimage import median_filter
+from scipy.stats import mode
+import warnings
+warnings.filterwarnings("ignore")
+
+
+def load_annot_pose_pair(asoid_dir, pose_dir, max_files=100):
+    file_pairs = []
+    for f in os.listdir(asoid_dir):
+        if not f.endswith(".csv") or "_annotated_iteration-" not in f:
+            continue
+        pf = f"{f.split('_annotated_iteration')[0]}.csv"
+        pf_path = os.path.join(pose_dir, pf)
+        if not os.path.isfile(pf_path):
+            continue
+        file_pairs.append((os.path.join(asoid_dir, f), pf_path))
+
+        if len(file_pairs) >= max_files:
+            break
+
+    return file_pairs
+
+def indices_to_spans(indices: Union[np.ndarray, List[int]]) -> List[Tuple[int, int]]:
+    if len(indices) == 0:
+        return []
+    if isinstance(indices, list):
+        indices = np.asarray(indices, dtype=np.int32)
+    indices = np.sort(indices)
+    n = indices.size
+    if n == 1:
+        i0 = int(indices[0])
+        return [(i0, i0)]
+    split_at = np.where(np.diff(indices) > 1)[0] + 1
+    if split_at.size == 0:
+        return [(int(indices[0]), int(indices[-1]))]
+    chunks = np.split(indices, split_at)
+    return [(int(chunk[0]), int(chunk[-1])) for chunk in chunks]
+
+def extract_behavior_mask(asoid_file, selected_behavior):
+    df = pd.read_csv(asoid_file, sep=",")
+    return np.hstack(([False], np.array(df[selected_behavior] == 1)))
+
+def get_individual_columns(df, individual_name):
+    """Helper to find the exact multi-index label for an individual"""
+    individuals = df.columns.get_level_values(0).unique()
+    for ind in individuals:
+        if individual_name.lower() in str(ind).lower():
+            return ind
+    raise ValueError(f"Individual {individual_name} not found")
+
+def calculate_valid_body_mask(df, individuals=['1', '2'], min_angle_deg=90.0):
+    """
+    Creates a boolean mask where True = Biologically Valid Pose.
+    Filters out frames where Snout-Center-Tail angle is acute (< 90 deg).
+    """
+    n_frames = len(df)
+    valid_mask = np.ones(n_frames, dtype=bool)
+    
+    min_angle_rad = np.radians(min_angle_deg)
+    
+    for ind_name in individuals:
+        try:
+            ind_label = get_individual_columns(df, ind_name)
+            
+            # Extract coordinates
+            snout_x = df[(ind_label, 'Snout', 'x')]
+            snout_y = df[(ind_label, 'Snout', 'y')]
+            center_x = df[(ind_label, 'Center', 'x')]
+            center_y = df[(ind_label, 'Center', 'y')]
+            tail_x = df[(ind_label, 'Tail(base)', 'x')]
+            tail_y = df[(ind_label, 'Tail(base)', 'y')]
+            
+            # Vectors: Center -> Snout and Center -> Tail
+            vec_cs_x = snout_x - center_x
+            vec_cs_y = snout_y - center_y
+            vec_ct_x = tail_x - center_x
+            vec_ct_y = tail_y - center_y
+            
+            # Dot Product
+            dot_prod = vec_cs_x * vec_ct_x + vec_cs_y * vec_ct_y
+            
+            # Magnitudes
+            mag_cs = np.sqrt(vec_cs_x**2 + vec_cs_y**2)
+            mag_ct = np.sqrt(vec_ct_x**2 + vec_ct_y**2)
+            
+            # Cosine of angle
+            # Avoid division by zero
+            denom = mag_cs * mag_ct
+            denom = denom.replace(0, np.nan) # Handle static/degenerate cases
+            
+            cos_angle = dot_prod / denom
+            
+            # Clamp values to [-1, 1] to avoid numerical errors in arccos
+            cos_angle = cos_angle.clip(-1.0, 1.0)
+            
+            # Calculate Angle in Radians
+            angles = np.arccos(cos_angle)
+            
+            # INVALID if angle is acute (< 90 deg) OR if points are too close (nan/undefined)
+            # Note: In standard vector math, 0 rad = same direction (straight line), 
+            # pi rad = opposite direction (180 deg).
+            # A "twist" usually implies the vectors are folding back on each other?
+            # Actually, for a spine:
+            # Straight body = 180 deg (pi).
+            # Curled up = 0 deg (0).
+            # Mice cannot curl such that Snout and Tail overlap sharply while Center is pivot?
+            # The prompt says: "cannot twist to above 90 degrees". 
+            # Usually this means the deviation from straight line shouldn't be extreme, 
+            # OR the angle at the vertex shouldn't be acute.
+            
+            # If the prompt implies the angle AT THE CENTER (vertex) cannot be acute:
+            # Then we filter if angle < 90 degrees (pi/2).
+            
+            is_invalid = angles < min_angle_rad
+            
+            # Also invalidate if magnitude is near zero (tracking collapse)
+            is_invalid |= (denom < 1e-3)
+            
+            valid_mask &= ~is_invalid.values
+
+        except Exception as e:
+            print(f"Warning: Could not calculate body mask for {ind_name}: {e}")
+            
+    return valid_mask
+
+def extract_features(pose_file, behavior_mask_full_length):
+    """
+    Extracts features while preserving temporal continuity and filtering biological outliers.
+    """
+    # 1. Load Full Data
+    df = pd.read_csv(pose_file, header=[0, 1, 2])
+    n_frames = len(df)
+    
+    # Ensure mask matches dataframe length
+    if len(behavior_mask_full_length) != n_frames:
+        if len(behavior_mask_full_length) == n_frames + 1:
+            behavior_mask_full_length = behavior_mask_full_length[1:]
+        elif len(behavior_mask_full_length) > n_frames:
+            behavior_mask_full_length = behavior_mask_full_length[:n_frames]
+        else:
+            raise ValueError(f"Mask length mismatch")
+
+    # 2. BIOLOGICAL FILTER: Check for impossible twists
+    bio_valid_mask = calculate_valid_body_mask(df, individuals=['1', '2'], min_angle_deg=90.0)
+    
+    # Combine behavior mask with biological validity
+    # We only want to cluster frames that are BOTH labeled "mounting" AND biologically possible
+    final_mask = behavior_mask_full_length & bio_valid_mask
+    
+    print(f"Behavior Frames: {np.sum(behavior_mask_full_length)} | "
+          f"Valid Bio Frames: {np.sum(final_mask)} | "
+          f"Filtered Outliers: {np.sum(behavior_mask_full_length) - np.sum(final_mask)}")
+
+    def get_centroid_series(df_full, individual_name):
+        matched_individual = get_individual_columns(df_full, individual_name)
+        x_cols = [col for col in df_full.columns if col[0] == matched_individual and col[2] == 'x']
+        y_cols = [col for col in df_full.columns if col[0] == matched_individual and col[2] == 'y']
+        cx = df_full[x_cols].mean(axis=1)
+        cy = df_full[y_cols].mean(axis=1)
+        return cx, cy
+
+    # 3. Compute Centroids on FULL data
+    fem_cx, fem_cy = get_centroid_series(df, '2')
+    male_cx, male_cy = get_centroid_series(df, '1')
+
+    # 4. Compute Derivatives (Vel/Acc) on FULL data
+    fem_vx = fem_cx.diff().fillna(0)
+    fem_vy = fem_cy.diff().fillna(0)
+    male_vx = male_cx.diff().fillna(0)
+    male_vy = male_cy.diff().fillna(0)
+
+    rel_vx = male_vx - fem_vx
+    rel_vy = male_vy - fem_vy
+
+    # Acceleration
+    rel_ax = rel_vx.diff().fillna(0)
+    rel_ay = rel_vy.diff().fillna(0)
+
+    # Stack basic dynamic features
+    basic_feats = np.column_stack([
+        rel_vx.values, 
+        rel_vy.values, 
+        rel_ax.values, 
+        rel_ay.values
+    ])
+    
+    base_feature_names = ['rel_vx', 'rel_vy', 'rel_ax', 'rel_ay']
+
+    # 5. Apply Sliding Window on FULL data
+    WINDOW_SIZE = 5
+    n_frames, n_feat = basic_feats.shape
+    
+    padded = np.pad(basic_feats, ((WINDOW_SIZE-1, 0), (0, 0)), mode='edge')
+    
+    window_feats_list = []
+    for i in range(n_frames):
+        window = padded[i:i+WINDOW_SIZE]
+        w_mean = window.mean(axis=0)
+        w_std = window.std(axis=0)
+        w_trend = window[-1] - window[0] 
+        
+        combined = np.concatenate([basic_feats[i], w_mean, w_std, w_trend])
+        window_feats_list.append(combined)
+        
+    final_features = np.array(window_feats_list) 
+    
+    temporal_feature_names = []
+    for name in base_feature_names:
+        temporal_feature_names.extend([
+            f"{name}_raw", 
+            f"{name}_win_mean", 
+            f"{name}_win_std", 
+            f"{name}_win_trend"
+        ])
+
+    masked_features = final_features[final_mask]
+    
+    # Return the FULL dataframe for visualization, but we will index it using the 
+    # indices derived from the masked features later if needed. 
+    # However, for prototype generation, we usually want the context of the full DF.
+    # We return the full DF and the mask separately or just the masked DF subset?
+    # To keep compatibility with your previous vis code, let's return the subset DF.
+    df_masked_visual = df[final_mask].reset_index(drop=True)
+
+    return masked_features, df_masked_visual, temporal_feature_names
+
+def cluster_behavior_subgroups(
+    rel_velocities: np.ndarray, 
+    n_components: int = 2
+):
+    X = rel_velocities
+    mean_vec = X.mean(axis=0)
+    std_vec = X.std(axis=0)
+    std_vec[std_vec == 0] = 1
+    X_normalized = (X - mean_vec) / std_vec
+
+    gmm = GaussianMixture(n_components=n_components, random_state=42, covariance_type='full')
+    labels = gmm.fit_predict(X_normalized)
+
+    return labels, gmm, mean_vec, std_vec
+
+def visualize_clustering_2d(
+    features: np.ndarray, 
+    labels: np.ndarray,
+    feature_names: list,
+    x_feat: int = 0, 
+    y_feat: int = 1, 
+    save_path: str = "clustering_plot.png"
+):
+    X_raw = features
+    y_labels = labels
+
+    fig, ax = plt.subplots(1, 1, figsize=(10, 8))
+    
+    hb = ax.hexbin(X_raw[:, x_feat], X_raw[:, y_feat], C=y_labels, gridsize=50, cmap='viridis', mincnt=1)
+    cb = fig.colorbar(hb, ax=ax)
+    cb.set_label('Cluster Label')
+
+    ax.set_title(f'Clustering: {feature_names[x_feat]} vs {feature_names[y_feat]}', fontsize=14)
+    ax.set_xlabel(f'{feature_names[x_feat]}', fontsize=12)
+    ax.set_ylabel(f'{feature_names[y_feat]}', fontsize=12)
+    ax.grid(True, linestyle=':', alpha=0.6)
+    ax.set_aspect('equal', adjustable='box')
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.show()
+    print(f"Plot saved to {save_path}")
+
+
+def visualize_clustering_pairplot(
+    features: np.ndarray, 
+    labels: np.ndarray,
+    feature_names: list,
+    feature_indices: list = [0, 1, 4, 5], 
+    save_path: str = "clustering_pairplot.png"
+):
+    n_feats = len(feature_indices)
+    fig, axes = plt.subplots(n_feats, n_feats, figsize=(15, 15))
+    
+    unique_labels = np.unique(labels)
+    colors = plt.cm.Set1(np.linspace(0, 1, len(unique_labels)))
+    
+    for i, fi in enumerate(feature_indices):
+        for j, fj in enumerate(feature_indices):
+            ax = axes[i, j]
+            if i == j:
+                for lbl, color in zip(unique_labels, colors):
+                    mask = labels == lbl
+                    ax.hist(features[mask, fi], bins=30, alpha=0.5, color=color, label=f'Cluster {lbl}')
+                ax.set_ylabel('Count')
+            else:
+                for lbl, color in zip(unique_labels, colors):
+                    mask = labels == lbl
+                    ax.scatter(features[mask, fj], features[mask, fi], 
+                             c=[color], alpha=0.3, s=10, label=f'Cluster {lbl}')
+            
+            if i == n_feats - 1:
+                ax.set_xlabel(feature_names[fj], fontsize=8)
+            if j == 0:
+                ax.set_ylabel(feature_names[fi], fontsize=8)
+            
+            ax.tick_params(labelsize=7)
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.show()
+    print(f"Plot saved to {save_path}")
+
+def visualize_cluster_distributions(
+    features: np.ndarray, 
+    labels: np.ndarray,
+    feature_names: list,
+    save_path: str = "cluster_distributions.png",
+    top_n_features: int = 8
+):
+    unique_labels = np.unique(labels)
+    n_clusters = len(unique_labels)
+    
+    if n_clusters < 2:
+        print("Need at least 2 clusters to plot distributions.")
+        return
+
+    discriminative_scores = []
+    global_std = features.std(axis=0)
+    global_std[global_std == 0] = 1
+    
+    for i in range(features.shape[1]):
+        feat_col = features[:, i]
+        means = [feat_col[labels == lbl].mean() for lbl in unique_labels]
+        max_diff = np.max(means) - np.min(means)
+        score = max_diff / global_std[i]
+        discriminative_scores.append(score)
+        
+    top_feat_indices = np.argsort(discriminative_scores)[::-1][:top_n_features]
+    
+    n_rows = (top_n_features + 1) // 2  # 2 columns per row
+    fig, axes = plt.subplots(n_rows, 2, figsize=(14, 4 * n_rows))
+    axes = axes.flatten()
+    
+    colors = plt.cm.Set1(np.linspace(0, 1, n_clusters))
+    
+    for idx, feat_idx in enumerate(top_feat_indices):
+        ax = axes[idx]
+        feat_name = feature_names[feat_idx]
+        
+        for lbl, color in zip(unique_labels, colors):
+            mask = labels == lbl
+            data = features[mask, feat_idx]
+            
+            # Plot Histogram
+            ax.hist(data, bins=50, alpha=0.6, density=True, label=f'Cluster {lbl} (n={np.sum(mask)})', color=color)
+            
+            # Plot Mean line
+            mean_val = data.mean()
+            ax.axvline(mean_val, color=color, linestyle='--', linewidth=1.5)
+            
+        ax.set_title(f'{feat_name}\n(Diff Score: {discriminative_scores[feat_idx]:.2f})', fontsize=10)
+        ax.set_xlabel('Value')
+        ax.set_ylabel('Density')
+        ax.legend(loc='upper right', fontsize=8)
+        ax.grid(True, linestyle=':', alpha=0.5)
+
+    # Hide unused subplots if odd number of features
+    for j in range(idx + 1, len(axes)):
+        axes[j].set_visible(False)
+        
+    plt.suptitle('Feature Distributions by Cluster (Top Discriminative Features)', fontsize=14, y=0.98)
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.show()
+    print(f"Distribution plot saved to {save_path}")
+
+    # --- Bonus: Plot Cluster Durations Histogram ---
+    # This helps verify if one cluster represents short events (intromission) vs long events (mounting)
+    fig_dur, ax_dur = plt.subplots(1, 1, figsize=(10, 5))
+    
+    durations = []
+    cluster_ids_for_dur = []
+    
+    current_lbl = labels[0]
+    start_idx = 0
+    
+    for i in range(1, len(labels)):
+        if labels[i] != current_lbl:
+            duration = i - start_idx
+            durations.append(duration)
+            cluster_ids_for_dur.append(current_lbl)
+            current_lbl = labels[i]
+            start_idx = i
+            
+    # Don't forget the last segment
+    durations.append(len(labels) - start_idx)
+    cluster_ids_for_dur.append(current_lbl)
+    
+    durations = np.array(durations)
+    cluster_ids_for_dur = np.array(cluster_ids_for_dur)
+    
+    for lbl, color in zip(unique_labels, colors):
+        mask = cluster_ids_for_dur == lbl
+        if np.any(mask):
+            dur_data = durations[mask]
+            # Convert frames to seconds assuming 30fps (adjust if your fps is different)
+            dur_seconds = dur_data / 30.0 
+            
+            ax_dur.hist(dur_seconds, bins=50, alpha=0.6, density=True, label=f'Cluster {lbl}', color=color)
+            
+    ax_dur.set_title('Distribution of Event Durations (Seconds)', fontsize=12)
+    ax_dur.set_xlabel('Duration (s)')
+    ax_dur.set_ylabel('Density')
+    ax_dur.legend()
+    ax_dur.grid(True, linestyle=':', alpha=0.5)
+    ax_dur.set_xlim(0, 5) # Focus on short events typical for mounting/intromission
+    
+    plt.tight_layout()
+    plt.savefig(save_path.replace('.png', '_durations.png'), dpi=150, bbox_inches='tight')
+    plt.show()
+    print(f"Duration plot saved to {save_path.replace('.png', '_durations.png')}")
+
+def generate_prototype_animations(
+    df: pd.DataFrame,
+    labels,
+    probs,
+    output_dir: str = "./prototypes",
+    fps: int = 10,
+    n_prototypes: int = 10  # <--- Changed to allow configurable number of GIFs
+):
+    if labels is None or df is None:
+        return
+
+    os.makedirs(output_dir, exist_ok=True)
+
+    unique_clusters = np.unique(labels)
+    unique_clusters = unique_clusters[unique_clusters != -1]
+
+    print(f"Generating {n_prototypes} prototypes per cluster for: {unique_clusters}")
+
+    individuals = df.columns.get_level_values(0).unique()
+    SPINE_CHAIN = ['Snout', 'Center', 'Tail(base)']
+    
+    # Pre-calculate XY columns to speed up animation loop
+    xy_cols = [col for col in df.columns if col[2] in ['x', 'y']]
+
+    for cluster_id in unique_clusters:
+        cluster_mask = (labels == cluster_id)
+        cluster_indices = np.where(cluster_mask)[0]
+ 
+        if len(cluster_indices) == 0:
+            continue
+
+        # Get probabilities for this specific cluster for all frames in this cluster
+        cluster_probs = probs[cluster_indices, cluster_id]
+        
+        # Sort indices by probability (descending)
+        sorted_local_indices = np.argsort(cluster_probs)[::-1]
+        
+        # Select top N candidates
+        top_n_candidates = sorted_local_indices[:n_prototypes * 2] # Get extra in case we filter for distance
+        
+        selected_global_indices = []
+        min_frame_distance = int(fps * 0.5) # Ensure at least 0.5s gap between prototypes to avoid duplicates
+
+        for local_idx in top_n_candidates:
+            global_idx = cluster_indices[local_idx]
+            
+            # Check if this frame is too close to already selected frames
+            is_distinct = True
+            for prev_idx in selected_global_indices:
+                if abs(global_idx - prev_idx) < min_frame_distance:
+                    is_distinct = False
+                    break
+            
+            if is_distinct:
+                selected_global_indices.append(global_idx)
+                
+            if len(selected_global_indices) >= n_prototypes:
+                break
+        
+        # Fallback: If we couldn't find enough distinct frames, just take the top ones regardless of distance
+        if len(selected_global_indices) < n_prototypes:
+            remaining_needed = n_prototypes - len(selected_global_indices)
+            for local_idx in sorted_local_indices:
+                global_idx = cluster_indices[local_idx]
+                if global_idx not in selected_global_indices:
+                    selected_global_indices.append(global_idx)
+                    if len(selected_global_indices) >= n_prototypes:
+                        break
+
+        print(f"Cluster {cluster_id}: Selected {len(selected_global_indices)} prototypes")
+
+        # Generate a GIF for each selected index
+        for proto_idx, center_idx in enumerate(selected_global_indices):
+            prob_val = probs[center_idx, cluster_id]
+            
+            window_frames = int(fps * 1.5) 
+            start_frame = max(0, center_idx - window_frames)
+            end_frame = min(len(df), center_idx + window_frames)
+            
+            fig, ax = plt.subplots(figsize=(8, 8))
+            ax.set_title(f"Cluster {cluster_id} | Proto #{proto_idx+1} | Conf: {prob_val:.3f}")
+            
+            subset = df.iloc[start_frame:end_frame][xy_cols]
+            all_vals = subset.values.flatten()
+            all_vals = all_vals[~np.isnan(all_vals)]
+
+            if len(all_vals) == 0: 
+                plt.close(fig)
+                continue
+
+            margin = 50
+            min_x, max_x = np.min(all_vals[::2]) - margin, np.max(all_vals[::2]) + margin
+            min_y, max_y = np.min(all_vals[1::2]) - margin, np.max(all_vals[1::2]) + margin
+            
+            ax.set_xlim(min_x, max_x)
+            ax.set_ylim(max_y, min_y)
+            ax.set_aspect('equal')
+            
+            lines = {} 
+            texts = {}
+            
+            for ind in individuals:
+                valid_parts = []
+                for bp in SPINE_CHAIN:
+                    if (ind, bp, 'x') in df.columns and (ind, bp, 'y') in df.columns:
+                        valid_parts.append(bp)
+                
+                if len(valid_parts) < 2:
+                    continue
+                    
+                xs_init = [df[(ind, bp, 'x')].iloc[start_frame] for bp in valid_parts]
+                ys_init = [df[(ind, bp, 'y')].iloc[start_frame] for bp in valid_parts]
+                
+                line, = ax.plot(xs_init, ys_init, 'o-', label=str(ind), markersize=5, linewidth=2)
+                lines[ind] = {'line': line, 'parts': valid_parts}
+                
+                cx = np.nanmean(xs_init)
+                cy = np.nanmean(ys_init)
+                txt = ax.text(cx, cy, str(ind), fontsize=10, bbox=dict(facecolor='white', alpha=0.7))
+                texts[ind] = txt
+
+            def animate(frame_i):
+                current_global_idx = start_frame + frame_i
+                # Update title to show absolute frame number if needed, or keep static
+                # ax.set_title(f"Cluster {cluster_id} | Frame {current_global_idx}") 
+                
+                for ind, obj in lines.items():
+                    valid_parts = obj['parts']
+                    line = obj['line']
+                    
+                    xs = [df[(ind, bp, 'x')].iloc[current_global_idx] for bp in valid_parts]
+                    ys = [df[(ind, bp, 'y')].iloc[current_global_idx] for bp in valid_parts]
+                    
+                    line.set_data(xs, ys)
+                    
+                    cx = np.nanmean(xs)
+                    cy = np.nanmean(ys)
+                    if not np.isnan(cx):
+                        texts[ind].set_position((cx, cy))
+                        
+                return list([obj['line'] for obj in lines.values()]) + list(texts.values())
+
+            ani = animation.FuncAnimation(fig, animate, frames=end_frame-start_frame, interval=1000/fps, blit=True)
+            
+            # Save with unique name: cluster_X_proto_Y.gif
+            out_path = os.path.join(output_dir, f"cluster_{cluster_id}_proto_{proto_idx+1:02d}.gif")
+            try:
+                ani.save(out_path, writer='pillow', fps=fps)
+            except Exception as e:
+                print(f"Error saving {out_path}: {e}")
+            finally:
+                plt.close(fig)
+        
+        print(f"Saved {len(selected_global_indices)} prototypes for Cluster {cluster_id}")
+
+def temporal_smooth_labels(
+    labels: np.ndarray,
+    probs: np.ndarray = None,
+    window_size: int = 5,
+    method: str = 'median'
+) -> np.ndarray:
+    if method == 'median':
+        return median_filter(labels.astype(float), size=window_size, mode='nearest').astype(int)
+    elif method == 'mode':
+        n = len(labels)
+        smoothed = labels.copy()
+        half_w = window_size // 2
+        for i in range(n):
+            start = max(0, i - half_w)
+            end = min(n, i + half_w + 1)
+            window_labels = labels[start:end]
+            smoothed[i] = mode(window_labels, keepdims=False)[0]
+        return smoothed
+    return labels
+
+def analyze_transitions(labels: np.ndarray):
+    unique_labels = np.unique(labels)
+    n = len(labels)
+    trans_counts = np.zeros((len(unique_labels), len(unique_labels)))
+    for i in range(n - 1):
+        if labels[i] in unique_labels and labels[i+1] in unique_labels:
+             idx_i = np.where(unique_labels == labels[i])[0][0]
+             idx_j = np.where(unique_labels == labels[i+1])[0][0]
+             trans_counts[idx_i, idx_j] += 1
+    
+    row_sums = trans_counts.sum(axis=1, keepdims=True)
+    row_sums[row_sums == 0] = 1
+    trans_probs = trans_counts / row_sums
+    
+    print("\n" + "="*50)
+    print("TRANSITION ANALYSIS")
+    print("="*50)
+    for i, lbl_i in enumerate(unique_labels):
+        for j, lbl_j in enumerate(unique_labels):
+            print(f"  State {lbl_i} → State {lbl_j}: {trans_probs[i,j]:.3f} ({trans_counts[i,j]:.0f} transitions)")
+
+if __name__ == "__main__":
+
+    asoid_dir = r"D:\Project\ASOID-Models\May-01-2026\videos"
+    pose_dir = r"D:\Data\Videos\ASOiD Predict"
+
+    pairs = load_annot_pose_pair(asoid_dir, pose_dir, max_files=25)
+    if not pairs:
+        print("No files found.")
+    else:
+        print(f"Loaded {len(pairs)} file pairs.")
+
+        features_all = []
+        df_vis_list = []
+        feature_names = None
+        
+        for asoid_file, pose_file in pairs:
+            mask = extract_behavior_mask(asoid_file, "m2f_anogenital")
+            
+            try:
+                feats, df_raw_vis, fnames = extract_features(pose_file, mask)
+                
+                if feats.shape[0] > 0:
+                    features_all.append(feats)
+                    df_vis_list.append(df_raw_vis)
+                    if feature_names is None:
+                        feature_names = fnames
+            except Exception as e:
+                print(f"Error processing {pose_file}: {e}")
+            
+        if not features_all:
+            print("No valid features extracted.")
+        else:
+            features_all = np.vstack(features_all)
+            df_vis = pd.concat(df_vis_list, ignore_index=True)
+            
+            features_all = np.nan_to_num(features_all, nan=0.0, posinf=0.0, neginf=0.0)
+            
+            print(f"Total Valid Behavior Frames: {features_all.shape[0]}")
+            print(f"Feature Dimension: {features_all.shape[1]}")
+
+            n_clusters = 2
+
+            from hmmlearn import hmm
+            print(f"\n{'='*50}")
+            print(f"Running HMM Clustering (n_components={n_clusters})")
+            print(f"{'='*50}")
+            
+            from sklearn.decomposition import PCA
+            pca = PCA(n_components=0.95, random_state=42)
+            features_pca = pca.fit_transform(features_all)
+            print(f"Reduced features from {features_all.shape[1]} to {features_pca.shape[1]}")
+            
+            mean_vec = features_pca.mean(axis=0)
+            std_vec = features_pca.std(axis=0)
+            std_vec[std_vec == 0] = 1
+            features_norm = (features_pca - mean_vec) / std_vec
+            features_norm = features_norm.astype(np.float64)
+
+            model = hmm.GaussianHMM(
+                n_components=n_clusters,
+                covariance_type='diag',
+                n_iter=300,
+                random_state=42,
+                init_params='mc',
+                verbose=False
+            )
+            model.reg_covar = 1e-4 
+            model.fit(features_norm)
+            labels = model.predict(features_norm)
+            probs = model.predict_proba(features_norm)
+            
+            smoothed_labels = temporal_smooth_labels(labels, method='median', window_size=5)
+            
+            analyze_transitions(smoothed_labels)
+
+            visualize_clustering_2d(
+                features_pca, smoothed_labels, 
+                [f'PC{i+1}' for i in range(features_pca.shape[1])], # Update names for PCA
+                x_feat=0, y_feat=1, 
+                save_path=f"clustering_{n_clusters}_hmm_pca.png"
+            )
+
+            visualize_cluster_distributions(
+                features_all, 
+                smoothed_labels, 
+                feature_names,
+                save_path="cluster_feature_dists.png",
+                top_n_features=8
+            )
+
+            generate_prototype_animations(
+                df_vis, 
+                smoothed_labels, 
+                probs, 
+                n_prototypes=5
+            )
