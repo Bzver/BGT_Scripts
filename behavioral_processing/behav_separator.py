@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.animation as animation
 from scipy.ndimage import median_filter
 from hmmlearn import hmm
+from tqdm import tqdm
 from typing import List, Tuple, Dict, Literal
 import warnings
 warnings.filterwarnings("ignore")
@@ -110,8 +111,6 @@ def extract_features(pose_file, mask):
 
     bio_valid_mask = calculate_valid_body_mask(df, individuals=['1', '2'], min_angle_deg=90.0)
     final_mask = mask & bio_valid_mask
-    
-    print(f"Behavior Frames: {np.sum(mask)} | Valid Bio Frames: {np.sum(final_mask)} | Filtered Outliers: {np.sum(mask) - np.sum(final_mask)}")
 
     def get_centroid_series(df_full, individual_name):
         matched_individual = get_individual_columns(df_full, individual_name)
@@ -574,23 +573,26 @@ def export_clusters_to_asoid(
 
 
 if __name__ == "__main__":
-    asoid_dir = r"D:\Project\ASOID-Models\May-01-2026\videos"
+    asoid_dir = r"D:\Project\ASOID-Models\May-01-2026\videos\cluster_exports"
     pose_dir = r"D:\Data\Videos\ASOiD Predict"
     fps = 10
-    n_clusters = 2
+    n_clusters = 4
     behavior = "m2f_anogenital"
 
     pairs = load_annot_pose_pair(asoid_dir, pose_dir, max_files=999)
+    n_pairs = len(pairs)
     if not pairs:
         print("No files found.")
     else:
-        print(f"Loaded {len(pairs)} file pairs.")
+        print(f"Loaded {n_pairs} file pairs.")
 
         features_all = []
         df_vis_list = []
         feature_names = None
         all_mask_indices = []
         
+        pbar = tqdm(total=n_pairs, desc="Extracting Features", unit="file", ncols=100)
+
         for asoid_file, pose_file in pairs:
             mask = extract_behavior_mask(asoid_file, behavior)
             
@@ -608,6 +610,10 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"Error processing {pose_file}: {e}")
             
+            pbar.update(1)
+
+        pbar.close()
+
         if not features_all:
             print("No valid features extracted.")
         else:
