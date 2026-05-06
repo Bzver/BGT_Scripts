@@ -8,8 +8,6 @@ import matplotlib.patches as mpatches
 from scipy import stats
 from statsmodels.stats.multitest import multipletests
 import brokenaxes
-import tkinter as tk    
-from tkinter import filedialog, simpledialog
 
 
 _original_standardize = brokenaxes.BrokenAxes.standardize_ticks
@@ -43,13 +41,17 @@ def load_h5_file(h5_path, min_start=None, min_end=None, fps=None):
 
 def bin_behavior_array(behav_array, behavior_map, bin_size_min, fps):
     bin_frames = int(bin_size_min * 60 * fps)
-    n_bins = len(behav_array) // bin_frames
+    beh_len = len(behav_array)
+    n_bins = (beh_len - 1) // bin_frames + 1
     n_behavs = len(behavior_map)
-    trimmed = behav_array[:n_bins * bin_frames].reshape(n_bins, bin_frames)
+
+    padded = np.zeros(n_bins * bin_frames, dtype=int)
+    padded[:beh_len] = behav_array
+    padded = padded.reshape(n_bins, bin_frames)
     
     counts = np.zeros((n_bins, n_behavs), dtype=int)
     for b in range(n_bins):
-        counts[b] = np.bincount(trimmed[b], minlength=n_behavs)
+        counts[b] = np.bincount(padded[b], minlength=n_behavs)
     return counts
 
 def apply_filter_per_pair(behav_array, behavior_map, threshold_frames):
@@ -436,8 +438,9 @@ def plot_trends(data, behavior_order, cumulative=False, plot_individual=False, o
     plt.close()
 
 def plot_pi_trends(data, behavior_order, plot_individual=False, output_dir=None):
-    binned_array = data['binned_array']  # (n_files, n_bins, n_behav, 2)
+    binned_array = data['binned_array']
     behav_dict = data["behav_dict"]
+    color_map = data["color_map"]
     bin_size_min = data['bin_size_min']
     
     n_files, n_bins, n_behav = binned_array.shape[:3]
@@ -483,7 +486,13 @@ def plot_pi_trends(data, behavior_order, plot_individual=False, output_dir=None)
     if not beh_to_plot:
         print("No behaviors to plot for PI trends")
         return
-    
+
+    color = {
+        "chamber": "#35C03C",
+        "interaction": "#6A9E86",
+        **color_map
+    }
+
     if plot_individual and output_dir:
         ind_dir = os.path.join(output_dir, "individual_pi_trends")
         os.makedirs(ind_dir, exist_ok=True)
@@ -492,7 +501,7 @@ def plot_pi_trends(data, behavior_order, plot_individual=False, output_dir=None)
             if len(beh_to_plot) == 1:
                 axes = [axes]
             for ax, (base, idx, pi_data) in zip(axes, beh_to_plot):
-                ax.plot(time_axis, pi_data[i], color=DOM_COLOR, lw=1, label='PI')
+                ax.plot(time_axis, pi_data[i], color=color.get(base.lower(), DOM_COLOR), lw=1, label='PI')
                 ax.set_title(f'{base.capitalize()} - PI Trace')
                 ax.grid(alpha=0.3, linestyle='--')
                 ax.axhline(0, color='gray', linestyle='--', lw=0.5)
@@ -518,10 +527,10 @@ def plot_pi_trends(data, behavior_order, plot_individual=False, output_dir=None)
         pi_mean = pi_data.mean(axis=0)
         pi_sem = stats.sem(pi_data, axis=0)
         
-        ax.plot(time_axis, pi_mean, color=DOM_COLOR, lw=1.8, marker='o', ms=4, 
+        ax.plot(time_axis, pi_mean, color=color.get(base.lower(), DOM_COLOR), lw=1.8, marker='o', ms=4, 
                 label='Mean PI', zorder=3, markerfacecolor='white', markeredgewidth=0.8)
         ax.fill_between(time_axis, pi_mean - pi_sem, pi_mean + pi_sem, 
-                       color=DOM_COLOR, alpha=0.25, label='± SEM', zorder=2)
+                       color=color.get(base.lower(), DOM_COLOR), alpha=0.25, label='± SEM', zorder=2)
         
         p_vals = np.zeros(n_bins)
         for t in range(n_bins):
@@ -564,28 +573,11 @@ def plot_pi_trends(data, behavior_order, plot_individual=False, output_dir=None)
 
 
 def main():
-    # tk.Tk().withdraw()
-    # h5_dir = filedialog.askdirectory(title="Select Directory with H5 Files")
-    # if not h5_dir: return
-    
-    # min_start = simpledialog.askfloat("Time Range", "Start time (minutes, empty=0):", minvalue=0)
-    # min_end = simpledialog.askfloat("Time Range", "End time (minutes, empty=end):", minvalue=0)
-    # filter_thresh = simpledialog.askinteger("Filtering", "Min frames per behavior to include (0=none):", minvalue=0, initialvalue=0)
-    # bin_size_min = simpledialog.askinteger("Binning", "Time bin size for trends (minutes):", minvalue=1, initialvalue=30)
-    
-    # plot_individual = messagebox.askyesno("Trend Mode", "Save individual trend plots per file? (No = Aggregated with background traces)")
-    # order_str = simpledialog.askstring("Behavior Order", "Comma-separated names for plot order:\n(e.g., dom_idle,sub_idle,dom_chase,sub_chase)")
-    # behavior_order = [n.strip() for n in order_str.split(',')] if order_str else None
-    # out_dir = filedialog.askdirectory(title="Select Output Directory for Plots")
-    # if not out_dir: out_dir = h5_dir
-    # os.makedirs(out_dir, exist_ok=True)
-
-
-    h5_dir = r"D:\Data\Videos\ASOiD Predict"
+    h5_dir = r"D:\\Data\Videos\ASOiD Predict"
     min_start = 0
-    min_end = 721
+    min_end = 720
     filter_thresh = 100
-    filter_date = [2, 3]
+    filter_date = [1]
     filter_se = "SE"
     bin_size_min = 30
     plot_individual = False
