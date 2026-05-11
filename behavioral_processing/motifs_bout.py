@@ -9,13 +9,10 @@ from hmmlearn.hmm import CategoricalHMM
 from scipy import stats
 from statsmodels.stats.multitest import multipletests
 from joblib import Parallel, delayed
-from typing import Tuple, Dict
+from typing import Dict
 
 from asoid_bout_cleaner import refine_bouts_parallel
 
-# =============================================================================
-# 1. LOAD DUAL-TRACK DATA (FULL 10Hz, ROLE REMAPPING)
-# =============================================================================
 
 def load_dual_role_full_10hz(h5_dir, min_start=None, min_end=None):
 
@@ -191,14 +188,12 @@ def extract_sustained_bouts_simple(labels, min_bout_frames=5):
 # 3. CATEGORICAL HMM TRAINING
 # =============================================================================
 def train_bout_cat_hmm(sequences, state_range=range(4, 9), max_iter=300, tol=1e-2, random_state=42):
-    # 1. Enforce strict int32 type & filter invalid sequences
     valid_seqs = [np.array(s, dtype=np.int32) for s in sequences if len(s) > 1]
-    valid_seqs = [s for s in valid_seqs if len(np.unique(s)) > 1]  # Need ≥2 unique states
+    valid_seqs = [s for s in valid_seqs if len(np.unique(s)) > 1]
     
     if not valid_seqs: 
         raise ValueError("No valid bout sequences. Median filtering may have removed all transitions.")
         
-    # 2. Concatenate & compute lengths (BYPASSES numpy inhomogeneous shape error)
     X_concat = np.concatenate(valid_seqs).reshape(-1, 1)  # Shape: (total_bouts, 1)
     lengths = [len(s) for s in valid_seqs]
     n_features = int(X_concat.max()) + 1
@@ -210,7 +205,7 @@ def train_bout_cat_hmm(sequences, state_range=range(4, 9), max_iter=300, tol=1e-
         try:
             model = CategoricalHMM(
                 n_components=n,
-                n_features=n_features,  # Explicitly set
+                n_features=n_features,
                 n_iter=max_iter,
                 tol=tol,
                 init_params='ste',
@@ -223,7 +218,7 @@ def train_bout_cat_hmm(sequences, state_range=range(4, 9), max_iter=300, tol=1e-
             bic = model.bic(X_concat, lengths=lengths)
             return n, bic, model
         except Exception as e:
-            print(f"\n❌ Failed for n_states={n}: {type(e).__name__}: {e}")
+            print(f"\nFailed for n_states={n}: {type(e).__name__}: {e}")
             return n, np.inf, None
             
     print(f"BIC sweep over n_states = {list(state_range)}...")

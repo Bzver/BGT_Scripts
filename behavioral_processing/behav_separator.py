@@ -185,11 +185,12 @@ def extract_features(pose_file, mask, window_size=5, feature_subset='default'):
     # === FEATURE SUBSET SELECTION ===
     PRESETS = {
         'default': ['dist', 'rel_speed', 'v_radial', 'v_tangential', 'a_radial_rel', 'a_tangential_rel'],
-        'mounting': [
-            'dist', 'v_radial', 'alignment_magnitude', 'fem_accel', 'fem_speed', 'a_radial_rel',
+        'mating': [
+            'dist', 'male_speed', 'fem_speed', 'alignment_magnitude'
         ],
-        'm2f_anogenital': [
-            'dist', 'rel_speed', 'male_speed', 'fem_speed', 'v_radial', 'a_radial_rel', 'v_tangential', 'a_tangential_rel'
+
+        'female_primary': [
+            'dist', 'fem_speed', 'fem_accel', 'v_radial', 'a_radial_rel'
         ],
         'dynamics_only': [
             'rel_speed', 'v_radial', 'v_tangential', 'a_radial_rel', 'a_tangential_rel',
@@ -714,7 +715,7 @@ def save_annotated_csv_with_new_behavior(
     behavior_name: str,
     src_behavior_name: str,
     new_annotation: np.ndarray,
-    on_exists: Literal['overwrite', 'skip', 'iteration']
+    on_exists: Literal['overwrite', 'skip', 'iteration', 'merge']
 ) -> bool:
 
     df = pd.read_csv(original_asoid_path, sep=",")
@@ -728,7 +729,25 @@ def save_annotated_csv_with_new_behavior(
             while f"{behavior_name}_iteration-{iteration}" in df.columns:
                 iteration += 1
             behavior_name = f"{behavior_name}_iteration-{iteration}"
-    
+        elif on_exists == "merge":
+            old_annotation = np.array(df[behavior_name])
+
+            if len(new_annotation) != len(old_annotation):
+                if len(new_annotation) == len(old_annotation) - 1:
+                    new_annotation = np.hstack(([0], new_annotation))
+                else:
+                    print(f"Annotation length ({len(new_annotation)}) doesn't match DF length ({len(df)})")
+                    return False
+            
+            new_annotation[new_annotation==0] = old_annotation[new_annotation==0]
+            df[behavior_name] = new_annotation
+            df[src_behavior_name][new_annotation == 1] = 0
+
+            os.makedirs(os.path.dirname(output_asoid_path), exist_ok=True)
+            df.to_csv(output_asoid_path, sep=",", index=False)
+            print(f"Saved: {output_asoid_path}")
+            return True
+
     if len(new_annotation) != len(df):
         if len(new_annotation) == len(df) - 1:
             new_annotation = np.hstack(([0], new_annotation))
@@ -753,7 +772,7 @@ def export_clusters_to_asoid(
     src_behavior: str,
     selections: Dict[int, str],
     output_subdir: str = "cluster_exports",
-    on_exists: str = 'ask', 
+    on_exists: str = 'merge', 
     fps: int = 10
 ):
 
@@ -816,13 +835,13 @@ def export_clusters_to_asoid(
 
 
 if __name__ == "__main__":
-    asoid_dir = r"D:\Project\ASOID-Models\May-01-2026\videos\cluster_exports"
+    asoid_dir = r"D:\Project\ASOID-Models\May-01-2026\1111\s2c\a2c"
     pose_dir = r"D:\Data\Videos\ASOiD Predict"
     fps = 10
-    n_clusters = 4
+    n_clusters = 3
     behavior = "mounting"
-    window_size = 5
-    feature_subset = behavior
+    window_size = 20
+    feature_subset = "mounting"
 
     pairs = load_annot_pose_pair(asoid_dir, pose_dir, max_files=999)
     n_pairs = len(pairs)
@@ -932,7 +951,7 @@ if __name__ == "__main__":
             )
             
             if selections:
-                on_exists = 'overwrite'
+                on_exists = 'merge'
                 output_subdir = input("Enter output subfolder name (default: 'cluster_exports'): ").strip()
                 if not output_subdir:
                     output_subdir = "cluster_exports"
