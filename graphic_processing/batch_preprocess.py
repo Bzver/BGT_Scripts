@@ -99,7 +99,7 @@ def preprocess_videos(input_folder, target_width, target_height, fps, output_suf
                 "-c:v", "h264_nvenc",
                 "-preset", "p7",
                 "-global_quality", "18",
-                "-rc", "vbr_hq",
+                "-rc", "vbr_hq",  
                 "-an",
                 output_path
             ]

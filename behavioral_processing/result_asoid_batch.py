@@ -396,11 +396,11 @@ def plot_trends(data, behavior_order, cumulative=False, plot_individual=False, o
     beh_to_plot = []
     beh_to_plot.append(("Interaction", None, interact_dom, interact_sub))
 
-    # for name in behavior_order:
-    #     if name not in behav_dict.keys() or name in ['other', 'idle']:
-    #         continue
-    #     idx = behav_dict[name]
-    #     beh_to_plot.append((name, idx, None, None))
+    for name in behavior_order:
+        if name not in behav_dict.keys() or name in ['other', 'idle']:
+            continue
+        idx = behav_dict[name]
+        beh_to_plot.append((name, idx, None, None))
 
     if plot_individual:
         ind_dir = os.path.join(output_dir, "individual_trends")
@@ -527,7 +527,7 @@ def main():
     filter_date = [1]
     filter_se = "SE" # None, "SE", "VG"
     bin_size_min = 10
-    plot_individual = False
+    plot_individual = True
     behaviors_to_exclude = ["ejaculation"]
 
     behavior_order = ["idle", "f2m_sniffing", "f2m_anogenital", "m2f_sniffing", "m2f_anogenital", "m2f_chasing", "mounting", "intromission", "huddling"]
