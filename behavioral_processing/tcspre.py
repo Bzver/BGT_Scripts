@@ -2,7 +2,14 @@ import os
 import re
 import csv
 import pandas as pd
+import numpy as np
 import glob
+
+INTERVAL_10 = False
+MAX_MIN = 30
+
+RANGE = range(1, MAX_MIN+1)
+RANGE_10 = range(10, MAX_MIN+1, 10)
 
 def convert_to_seconds(time_str):
     if not time_str or time_str == "":
@@ -172,25 +179,49 @@ def process_folder(folder_path):
             zones = ['Di', 'Do', 'Si', 'So']
             
             for zone in zones:
+                # Pre-test data (usually just interval 1)
                 pre_val = 0.0
                 if animal_id in pre_data:
                     if 1 in pre_data[animal_id]:
                         pre_val = pre_data[animal_id][1].get(zone, 0.0)
                 row[f'{zone}_pre'] = pre_val
 
-                intervals = list(range(1,31))
-                sum_val = 0.0
-                
-                for i, interval_num in enumerate(intervals):
-                    val = 0.0
-                    if animal_id in main_data and interval_num in main_data[animal_id]:
-                        val = main_data[animal_id][interval_num].get(zone, 0.0)
+                if INTERVAL_10:
+                    block_ends = RANGE_10
+                    total_sum = 0.0
                     
-                    col_name = f"{zone}_{(interval_num)}min"
-                    row[col_name] = val
-                    sum_val += val
-                    
-                row[f'{zone}_Sum'] = sum_val
+                    for block_end in block_ends:
+                        block_start = block_end - 9
+                        block_sum = 0.0
+                        has_data = False
+                        
+                        for min_idx in range(block_start, block_end + 1):
+                            if animal_id in main_data and min_idx in main_data[animal_id]:
+                                block_sum += main_data[animal_id][min_idx].get(zone, 0.0)
+                                has_data = True
+                        
+                        col_name = f"{zone}_{block_end}min"
+                        if has_data:
+                            row[col_name] = block_sum
+                            total_sum += block_sum
+                        else:
+                            row[col_name] = np.nan
+                            
+                    row[f'{zone}_Sum'] = total_sum
+                else:
+                    sum_val = 0.0
+                    for interval_num in RANGE:
+                        val = np.nan 
+                        if animal_id in main_data and interval_num in main_data[animal_id]:
+                            val = main_data[animal_id][interval_num].get(zone, 0.0)
+                        
+                        col_name = f"{zone}_{interval_num}min"
+                        row[col_name] = val
+                        
+                        if not pd.isna(val):
+                            sum_val += val
+                            
+                    row[f'{zone}_Sum'] = sum_val
                 
             combined_data.append(row)
             
@@ -202,22 +233,26 @@ def process_folder(folder_path):
     desired_order = []
     for zone in ['Di', 'Do', 'Si', 'So']:
         desired_order.append(f'{zone}_pre')
-        for i in list(range(1, 31)):
-            desired_order.append(f'{zone}_{i}min')
+        if INTERVAL_10:
+            for block in RANGE_10:
+                desired_order.append(f'{zone}_{block}min')
+        else:
+            for i in RANGE:
+                desired_order.append(f'{zone}_{i}min')
         desired_order.append(f'{zone}_Sum')
     
     final_cols = ['Data_Source'] + desired_order
     
     for col in final_cols:
         if col not in df_final.columns:
-            df_final[col] = 0.0
+            df_final[col] = np.nan # Use NaN for completely missing columns
             
     df_final = df_final[final_cols]
     
     return df_final
 
 if __name__ == "__main__":
-    folder_path = r'D:\Data\TCS'
+    folder_path = r'D:\Data\TCS\260910'
     
     print("Starting batch processing...")
     df_result = process_folder(folder_path)

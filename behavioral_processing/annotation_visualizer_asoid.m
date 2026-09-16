@@ -5,7 +5,7 @@ clc;
 %% ==== Configuration ====
 fps = 10;
 min_frames = 10;
-bin_min = 10;                          % Bin size in minutes for trend plot
+bin_min = 10;                         % Bin size in minutes for trend plot
 binSize = bin_min * 60 * fps;         % Frames per bin
 min_bout_frames = 5;                  % Minimum frames to count as a bout
 

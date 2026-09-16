@@ -835,13 +835,13 @@ def export_clusters_to_asoid(
 
 
 if __name__ == "__main__":
-    asoid_dir = r"D:\Project\ASOID-Models\May-01-2026\1111\s2c\a2c"
-    pose_dir = r"D:\Data\Videos\ASOiD Predict"
+    asoid_dir = r"D:\Project\ASOID-Models\May-01-2026\videos"
+    pose_dir = r"D:\Project\ASOID-Models\May-01-2026\videos"
     fps = 10
     n_clusters = 3
-    behavior = "mounting"
+    behavior = "m2f_anogenital"
     window_size = 20
-    feature_subset = "mounting"
+    feature_subset = "dynamics_only"
 
     pairs = load_annot_pose_pair(asoid_dir, pose_dir, max_files=999)
     n_pairs = len(pairs)
@@ -924,14 +924,14 @@ if __name__ == "__main__":
             visualize_clustering_2d(
                 features_all, labels, 
                 feature_names,
-                save_path=f"clustering_{n_clusters}_hmm_pca.png"
+                save_path=f"{asoid_dir}/clustering_{n_clusters}_hmm_pca.png"
             )
 
             visualize_cluster_distributions(
                 features_all, 
                 labels, 
                 feature_names,
-                save_path="cluster_feature_dists.png",
+                save_path=f"{asoid_dir}/cluster_feature_dists.png",
                 top_n_features=4
             )
 
@@ -941,7 +941,8 @@ if __name__ == "__main__":
                 probs, 
                 n_prototypes=10,
                 file_feature_lengths=file_feature_lengths,
-                all_mask_indices=all_mask_indices)
+                all_mask_indices=all_mask_indices,
+                output_dir=f"{asoid_dir}/prototypes")
 
             selections = interactive_cluster_selection(
                 labels, 

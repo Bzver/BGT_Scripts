@@ -39,8 +39,8 @@ def save_predictions(predict_npy, source_file_name, annotation_classes, framerat
 
 
 if __name__ == "__main__":
-    rootdir = r"D:\Project\ASOID-Models\Apr-29-2026\videos"
-    config = r"D:\Project\ASOID-Models\Apr-29-2026\config.ini"
+    rootdir = r"D:\Project\ASOID-Models\May-01-2026\videos"
+    config = r"D:\Project\ASOID-Models\May-01-2026\config.ini"
     annotation_classes, framerate = parse_config(config)
 
     print(f"Finding npy files in {rootdir}")

@@ -23,7 +23,8 @@ def format_func_sec(value, tick_number):
 
 def load_h5_file(h5_path, min_start=None, min_end=None, fps=None):
     with h5py.File(h5_path, 'r') as f:
-        behav_array = f['/data/behaviors'][:].flatten()
+        # NEW: Load 2D behavior array without flattening
+        behav_array = f['/data/behaviors'][:]  # Shape: (n_frames, 2)
         behavior_map = json.loads(f['/meta/behavior_map'][()])
         color_map = json.loads(f['/meta/color_map'][()])
         meta = {k: v for k, v in f['/meta'].attrs.items()}
@@ -41,27 +42,78 @@ def load_h5_file(h5_path, min_start=None, min_end=None, fps=None):
         
     return behav_array, behavior_map, color_map, fps
 
-def bin_behavior_array(behav_array, behavior_map, bin_size_min, fps):
+def bin_behavior_array_2d(behav_array, behavior_map, bin_size_min, fps):
+    """
+    Bin 2D behavior array where column 0 = dominant, column 1 = subordinate
+    
+    Parameters:
+    -----------
+    behav_array : ndarray, shape (n_frames, 2)
+        Behavior indices for dominant (col 0) and subordinate (col 1)
+    behavior_map : list
+        List of behavior names
+    bin_size_min : float
+        Bin size in minutes
+    fps : float
+        Frames per second
+        
+    Returns:
+    --------
+    counts : ndarray, shape (n_bins, n_behavs, 2)
+        Counts for each behavior, separated by dom/sub
+    """
     bin_frames = int(bin_size_min * 60 * fps)
     beh_len = len(behav_array)
     n_bins = (beh_len - 1) // bin_frames + 1
     n_behavs = len(behavior_map)
 
-    padded = np.zeros(n_bins * bin_frames, dtype=int)
-    padded[:beh_len] = behav_array
-    padded = padded.reshape(n_bins, bin_frames)
+    # Pad to fit bins
+    padded_dom = np.zeros(n_bins * bin_frames, dtype=int)
+    padded_sub = np.zeros(n_bins * bin_frames, dtype=int)
+    padded_dom[:beh_len] = behav_array[:, 0]
+    padded_sub[:beh_len] = behav_array[:, 1]
     
-    counts = np.zeros((n_bins, n_behavs), dtype=int)
+    padded_dom = padded_dom.reshape(n_bins, bin_frames)
+    padded_sub = padded_sub.reshape(n_bins, bin_frames)
+    
+    # Count behaviors for dominant and subordinate separately
+    counts_dom = np.zeros((n_bins, n_behavs), dtype=int)
+    counts_sub = np.zeros((n_bins, n_behavs), dtype=int)
+    
     for b in range(n_bins):
-        counts[b] = np.bincount(padded[b], minlength=n_behavs)
+        counts_dom[b] = np.bincount(padded_dom[b], minlength=n_behavs)
+        counts_sub[b] = np.bincount(padded_sub[b], minlength=n_behavs)
+    
+    # Stack into (n_bins, n_behavs, 2)
+    counts = np.stack([counts_dom, counts_sub], axis=-1)
     return counts
 
-def apply_filter_per_pair(behav_array, behavior_map, threshold_frames):
-    counts = np.bincount(behav_array, minlength=len(behavior_map))
-    mask = counts < threshold_frames
+def apply_filter_per_pair_2d(behav_array, behavior_map, threshold_frames):
+    """
+    Apply filter to 2D behavior array
+    
+    Parameters:
+    -----------
+    behav_array : ndarray, shape (n_frames, 2)
+    behavior_map : list
+    threshold_frames : int
+    
+    Returns:
+    --------
+    filtered : ndarray, shape (n_frames, 2)
+    """
+    # Count occurrences for both columns
+    counts_dom = np.bincount(behav_array[:, 0], minlength=len(behavior_map))
+    counts_sub = np.bincount(behav_array[:, 1], minlength=len(behavior_map))
+    
+    # Combined mask: filter if either dom or sub count is below threshold
+    mask = (counts_dom < threshold_frames) & (counts_sub < threshold_frames)
+    
     filtered = behav_array.copy()
     for idx in np.where(mask)[0]:
-        filtered[behav_array == idx] = 0
+        filtered[behav_array[:, 0] == idx, 0] = 0
+        filtered[behav_array[:, 1] == idx, 1] = 0
+    
     return filtered
 
 def aggregate_all_files(h5_dir, min_start, min_end, filter_thresh, filter_mating, filter_date, filter_se, filter_session, behaviors_to_exclude, bin_size_min):
@@ -86,8 +138,8 @@ def aggregate_all_files(h5_dir, min_start, min_end, filter_thresh, filter_mating
         for f in h5_files:
             with h5py.File(f, 'r') as h5f:
                 meta = {k: v for k, v in h5f['/meta'].attrs.items()}
-                day = meta["session_id"]
-                if int(day) in filter_session:
+                session = meta["session_id"]
+                if int(session) in filter_session:
                     h5_files_filtered.append(f)
 
         print(f"Session filtering activated - files: {len(h5_files)} -> {len(h5_files_filtered)}")
@@ -121,7 +173,8 @@ def aggregate_all_files(h5_dir, min_start, min_end, filter_thresh, filter_mating
             for f in h5_files:
                 with h5py.File(f, 'r') as h5f:
                     arr, _, _, _ = load_h5_file(f)
-                    mating_sum = np.sum(np.isin(arr, mating_indices))
+                    # Check both columns for mating behaviors
+                    mating_sum = np.sum(np.isin(arr[:, 0], mating_indices)) + np.sum(np.isin(arr[:, 1], mating_indices))
 
                 if filter_thresh > 0:
                     if mating_sum >= filter_thresh:
@@ -133,12 +186,15 @@ def aggregate_all_files(h5_dir, min_start, min_end, filter_thresh, filter_mating
             h5_files = h5_files_filtered
 
     _, ref_map, color_map, fps = load_h5_file(h5_files[0], min_start, min_end)
-    base_names = sorted(set(n.split('_', 1)[1] for n in ref_map  if '_' in n and n != 'other'))
-    for bn in base_names:
-        if bn in behaviors_to_exclude:
+    
+    # NEW: No more dom_/sub_ prefixes - use behavior_map directly
+    base_names = sorted(set(name for name in ref_map if name != 'other'))
+    for bn in behaviors_to_exclude:
+        if bn in base_names:
             base_names.remove(bn)
-    dom_src = {b: ref_map.index(f"dom_{b}") if f"dom_{b}" in ref_map else None for b in base_names}
-    sub_src = {b: ref_map.index(f"sub_{b}") if f"sub_{b}" in ref_map else None for b in base_names}
+    
+    # Create mapping from behavior name to index
+    behav_to_idx = {name: idx for idx, name in enumerate(ref_map)}
 
     n_files = len(h5_files)
     n_behav = len(base_names)
@@ -148,22 +204,23 @@ def aggregate_all_files(h5_dir, min_start, min_end, filter_thresh, filter_mating
     for f in h5_files:
         arr, _, _, _ = load_h5_file(f, min_start, min_end, fps)
         if filter_thresh > 0:
-            arr = apply_filter_per_pair(arr, ref_map, filter_thresh)
+            arr = apply_filter_per_pair_2d(arr, ref_map, filter_thresh)
 
-        full_binned = bin_behavior_array(arr, ref_map, bin_size_min, fps)
+        # NEW: Use 2D binning function
+        full_binned = bin_behavior_array_2d(arr, ref_map, bin_size_min, fps)
         n_bins_local = full_binned.shape[0]
 
-        file_aligned = np.zeros((n_bins_local,n_behav,2), dtype=int)
+        # Extract only the behaviors we care about
+        file_aligned = np.zeros((n_bins_local, n_behav, 2), dtype=int)
         for j, base in enumerate(base_names):
-            if dom_src[base] is not None:
-                file_aligned[:, j, 0] = full_binned[:, dom_src[base]]
-            if sub_src[base] is not None:
-                file_aligned[:, j, 1] = full_binned[:, sub_src[base]]
+            if base in behav_to_idx:
+                idx = behav_to_idx[base]
+                file_aligned[:, j, :] = full_binned[:, idx, :]
 
         aligned_list.append(file_aligned)
         max_bins = max(max_bins, n_bins_local)
 
-    binned_array = np.zeros((n_files,max_bins,n_behav,2), dtype=int)
+    binned_array = np.zeros((n_files, max_bins, n_behav, 2), dtype=int)
 
     for i, file_aligned in enumerate(aligned_list):
         n_bins_local = file_aligned.shape[0]
@@ -221,8 +278,6 @@ def plot_raw_duration_grouped(data, behavior_order, output_path):
     dom_mean, sub_mean = dom_vals.mean(0), sub_vals.mean(0)
     dom_sem, sub_sem = stats.sem(dom_vals, 0), stats.sem(sub_vals, 0)
     p_vals = np.array([safe_paired_ttest(dom_vals[:,i], sub_vals[:,i]) for i in range(n_cats)])
-    # _, p_vals_fdr, _, _ = multipletests(p_vals, alpha=0.05, method='fdr_bh')
-    # markers = ['***' if p<0.001 else '**' if p<0.01 else '*' if p<0.05 else f'p={p:.3f}\np_o={p_o:.3f}' for p, p_o in zip(p_vals_fdr, p_vals)]
 
     markers = [f'***\n{p:.3f}' if p<0.001 else f'**\n{p:.3f}' if p<0.0095 else f'*\n{p:.3f}' if p<0.05 else f'{p:.3f}' for p in p_vals]
     
@@ -333,8 +388,6 @@ def plot_preference_index(data, behavior_order, output_path):
     pi_mean = pi_vals.mean(0)
     pi_sem = stats.sem(pi_vals, 0)
     p_vals = np.array([stats.ttest_1samp(pi_vals[:,i], 0).pvalue for i in range(pi_vals.shape[1])])
-    # _, p_vals_fdr, _, _ = multipletests(p_vals, alpha=0.05, method='fdr_bh')
-    # markers = ['***' if p<0.001 else '**' if p<0.01 else '*' if p<0.05 else f'p={p:.3f}\np_o={p_o:.3f}' for p, p_o in zip(p_vals_fdr, p_vals)]
 
     markers = [f'***\n{p:.3f}' if p<0.001 else f'**\n{p:.3f}' if p<0.0095 else f'*\n{p:.3f}' if p<0.05 else f'{p:.3f}' for p in p_vals]
     
@@ -520,17 +573,20 @@ def plot_trends(data, behavior_order, cumulative=False, plot_individual=False, o
 def main():
     h5_dir = r"D:\Project\ASOID-Models\May-01-2026\videos"
     min_start = 0
-    min_end = 721
-    filter_thresh = 600
+    min_end = 180
+    filter_thresh = 100
     filter_mating = False
     filter_session = []
     filter_date = [1]
-    filter_se = "SE" # None, "SE", "VG"
-    bin_size_min = 10
-    plot_individual = True
-    behaviors_to_exclude = ["ejaculation"]
+    filter_se = "VG" # None, "SE", "VG"
+    bin_size_min = 30
+    plot_individual = False
+    behaviors_to_exclude = ["ejaculation", "intromission", "m2f_chasing", "huddling", "f2m_sniffing", "f2m_anogenital", "m2f_sniffing", "m2f_anogenital", "mounting"]
+    
+    # Added list for behaviors to include in calculation but exclude from plotting
+    behavior_to_forego_plotting = [] 
 
-    behavior_order = ["idle", "f2m_sniffing", "f2m_anogenital", "m2f_sniffing", "m2f_anogenital", "m2f_chasing", "mounting", "intromission", "huddling"]
+    behavior_order = ["idle", "f2m_sniffing", "f2m_anogenital", "m2f_sniffing", "m2f_anogenital", "mounting", "male_huddling", "female_huddling"]
     out_dir = h5_dir
     
     print("Loading & aggregating data...")
@@ -540,15 +596,18 @@ def main():
     if behavior_order is None:
         behavior_order = sorted(set(data["base_names"]))
 
+    # Filter out behaviors that should be calculated but not explicitly plotted
+    behavior_order_to_plot = [b for b in behavior_order if b not in behavior_to_forego_plotting]
+
     print("Generating Plot 1...")
-    plot_raw_duration_grouped(data, behavior_order, os.path.join(out_dir, "plot_1_raw_duration.png"))
+    plot_raw_duration_grouped(data, behavior_order_to_plot, os.path.join(out_dir, "plot_1_raw_duration.png"))
 
     print("Generating Plot 2...")
-    plot_preference_index(data, behavior_order, os.path.join(out_dir, "plot_2_preference_index.png"))
+    plot_preference_index(data, behavior_order_to_plot, os.path.join(out_dir, "plot_2_preference_index.png"))
     
     print("Generating Trend Plots...")
-    plot_trends(data, behavior_order, cumulative=False, plot_individual=plot_individual, output_dir=out_dir)
-    plot_trends(data, behavior_order, cumulative=True, plot_individual=plot_individual, output_dir=out_dir)
+    plot_trends(data, behavior_order_to_plot, cumulative=False, plot_individual=plot_individual, output_dir=out_dir)
+    plot_trends(data, behavior_order_to_plot, cumulative=True, plot_individual=plot_individual, output_dir=out_dir)
 
     print("All plots saved successfully.")
 

@@ -124,7 +124,7 @@ def parse_annotation(text_content):
 
 if __name__ == "__main__":
     fps = 10
-    project_path = "D:/DGH/Data/Videos/2025-07-14 7day Marathon"
+    project_path = "D:/Data/Videos/2025-07-14 7day Marathon"
     annot_path = os.path.join(project_path, "20250716-first3h40min_annot.txt")
 
     output_name_D = "20250716_annot_dom"

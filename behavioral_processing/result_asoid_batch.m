@@ -12,7 +12,7 @@ min_bout_frames = 5;                  % Minimum frames to count as a bout
 % === NEW OPTION: Group dynamic behaviors by prefix ===
 % If true, 'dom_groom_face' and 'dom_groom_body' will be collapsed into 'groom'.
 % 'dom_' and 'sub_' are treated as category prefixes, not behavior prefixes.
-group_by_prefix = false; 
+group_by_prefix = False; 
 
 custom_str_header = " (SE + Mating)";
 
